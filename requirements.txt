@@ -1,0 +1,6 @@
+beautifulsoup4
+datasets
+pytest
+torch
+torchvision
+transformers

@@ -1,0 +1,19 @@
+train stories 3552  test stories 626  device cuda
+[baseline copy-last] img_R@1=0.023  img_R@10=0.317  img_medrank=65  img_story_R@1=0.244  img_story_chance=0.210  txt_R@1=0.031  txt_R@10=0.542  txt_medrank=8  txt_story_R@1=0.272  txt_story_chance=0.210  n_windows=2974
+/home/aljiro/dev/dnnls_architecture/poc/train.py:68: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.encoder = nn.TransformerEncoder(enc, layers)
+predictor params: 1,942,657   train windows: 17018
+epoch   1  loss 10.963  tau 0.135  4s
+[test e1] img_R@1=0.007  img_R@10=0.060  img_medrank=212  img_story_R@1=0.229  img_story_chance=0.210  txt_R@1=0.002  txt_R@10=0.021  txt_medrank=597  txt_story_R@1=0.214  txt_story_chance=0.210  n_windows=2974
+epoch   5  loss 8.645  tau 0.125  20s
+[test e5] img_R@1=0.063  img_R@10=0.386  img_medrank=20  img_story_R@1=0.264  img_story_chance=0.210  txt_R@1=0.015  txt_R@10=0.109  txt_medrank=168  txt_story_R@1=0.228  txt_story_chance=0.210  n_windows=2974
+epoch  10  loss 7.944  tau 0.114  39s
+[test e10] img_R@1=0.071  img_R@10=0.448  img_medrank=13  img_story_R@1=0.275  img_story_chance=0.210  txt_R@1=0.016  txt_R@10=0.120  txt_medrank=160  txt_story_R@1=0.229  txt_story_chance=0.210  n_windows=2974
+epoch  15  loss 7.418  tau 0.107  60s
+[test e15] img_R@1=0.071  img_R@10=0.457  img_medrank=13  img_story_R@1=0.277  img_story_chance=0.210  txt_R@1=0.020  txt_R@10=0.114  txt_medrank=201  txt_story_R@1=0.232  txt_story_chance=0.210  n_windows=2974
+epoch  20  loss 7.035  tau 0.103  80s
+[test e20] img_R@1=0.075  img_R@10=0.453  img_medrank=13  img_story_R@1=0.280  img_story_chance=0.210  txt_R@1=0.016  txt_R@10=0.102  txt_medrank=224  txt_story_R@1=0.237  txt_story_chance=0.210  n_windows=2974
+epoch  25  loss 6.830  tau 0.101  101s
+[test e25] img_R@1=0.075  img_R@10=0.448  img_medrank=13  img_story_R@1=0.282  img_story_chance=0.210  txt_R@1=0.017  txt_R@10=0.101  txt_medrank=243  txt_story_R@1=0.227  txt_story_chance=0.210  n_windows=2974
+epoch  30  loss 6.770  tau 0.101  121s
+[test e30] img_R@1=0.075  img_R@10=0.452  img_medrank=14  img_story_R@1=0.280  img_story_chance=0.210  txt_R@1=0.015  txt_R@10=0.100  txt_medrank=251  txt_story_R@1=0.231  txt_story_chance=0.210  n_windows=2974
