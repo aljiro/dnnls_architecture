@@ -1,0 +1,7 @@
+venv/
+.pytest_cache/
+__pycache__/
+poc/cache/
+poc/out/*.pt
+diagnostics/out/*.pt
+checkpoints/

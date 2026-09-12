@@ -1,0 +1,10 @@
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+stories: 3552  train 2841  val 711  equalize=True  ctx_loss=True
+validation floors: constant median image L1 = 0.2580   copy-4th-frame L1 = 0.3259
+epoch 1/6 (18s)  train im=0.2615 ctx=0.0064 txt=7.281 | val L1=0.2588 (median floor 0.2580, copy floor 0.3259) | pred spread 0.0000 vs target spread 0.2989 | |pred - median| 0.0224 | dead backbone units 0% | fused latent: spread 0.0000, dead 44%
+epoch 2/6 (20s)  train im=0.2586 ctx=0.0038 txt=5.956 | val L1=0.2587 (median floor 0.2580, copy floor 0.3259) | pred spread 0.0000 vs target spread 0.2989 | |pred - median| 0.0209 | dead backbone units 0% | fused latent: spread 0.0000, dead 44%
+epoch 3/6 (19s)  train im=0.2585 ctx=0.0037 txt=5.891 | val L1=0.2590 (median floor 0.2580, copy floor 0.3259) | pred spread 0.0000 vs target spread 0.2989 | |pred - median| 0.0260 | dead backbone units 0% | fused latent: spread 0.0000, dead 44%
+epoch 4/6 (17s)  train im=0.2585 ctx=0.0037 txt=5.784 | val L1=0.2586 (median floor 0.2580, copy floor 0.3259) | pred spread 0.0000 vs target spread 0.2989 | |pred - median| 0.0195 | dead backbone units 0% | fused latent: spread 0.0000, dead 44%
+epoch 5/6 (19s)  train im=0.2585 ctx=0.0036 txt=5.645 | val L1=0.2586 (median floor 0.2580, copy floor 0.3259) | pred spread 0.0000 vs target spread 0.2989 | |pred - median| 0.0199 | dead backbone units 0% | fused latent: spread 0.0000, dead 44%
+epoch 6/6 (21s)  train im=0.2585 ctx=0.0036 txt=5.467 | val L1=0.2587 (median floor 0.2580, copy floor 0.3259) | pred spread 0.0000 vs target spread 0.2989 | |pred - median| 0.0214 | dead backbone units 0% | fused latent: spread 0.0000, dead 44%
+figure: /home/aljiro/dev/dnnls_architecture/diagnostics/out/original_eq.png
