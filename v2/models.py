@@ -93,19 +93,26 @@ class TextEncoderLSTM(nn.Module):
 
 
 class TextDecoder(nn.Module):
-    """LSTM language model conditioned on a vector at every step (concatenated to the token embedding)."""
+    """LSTM language model conditioned on a vector at every step.
+
+    The condition is first projected to a fixed COND_PROJ_DIM, so the embedding, LSTM and output
+    layers are the same for every stage and can be pretrained as an unconditional language model
+    (v2/pretrain_text.py, condition = zeros) and then loaded into any predictor."""
+
+    COND_PROJ_DIM = 256
 
     def __init__(self, vocab_size: int, cond_dim: int, embedding_dim: int = 128, hidden_dim: int = 384,
                  word_dropout: float = 0.0, unk_id: int = 100) -> None:
         super().__init__()
         self.word_dropout, self.unk_id = word_dropout, unk_id
         self.embedding = nn.Embedding(vocab_size, embedding_dim)
-        self.init_h = nn.Linear(cond_dim, hidden_dim)
-        self.lstm = nn.LSTM(embedding_dim + cond_dim, hidden_dim, batch_first=True)
+        self.cond_proj = nn.Linear(cond_dim, self.COND_PROJ_DIM)
+        self.init_h = nn.Linear(self.COND_PROJ_DIM, hidden_dim)
+        self.lstm = nn.LSTM(embedding_dim + self.COND_PROJ_DIM, hidden_dim, batch_first=True)
         self.out = nn.Linear(hidden_dim, vocab_size)
 
-    def _step_input(self, ids: Tensor, cond: Tensor) -> Tensor:
-        return torch.cat((self.embedding(ids), cond[:, None].expand(-1, ids.size(1), -1)), -1)
+    def _step_input(self, ids: Tensor, c: Tensor) -> Tensor:
+        return torch.cat((self.embedding(ids), c[:, None].expand(-1, ids.size(1), -1)), -1)
 
     def forward(self, ids_in: Tensor, cond: Tensor) -> Tensor:  # teacher forcing: [B, L] -> [B, L, vocab]
         if self.training and self.word_dropout > 0:
@@ -113,22 +120,31 @@ class TextDecoder(nn.Module):
             # the previous words alone and has to use the conditioning vector (Bowman et al. 2016)
             drop = torch.rand_like(ids_in, dtype=torch.float) < self.word_dropout
             ids_in = ids_in.masked_fill(drop, self.unk_id)
-        h0 = torch.tanh(self.init_h(cond))[None]
-        out, _ = self.lstm(self._step_input(ids_in, cond), (h0, torch.zeros_like(h0)))
+        c = self.cond_proj(cond)
+        h0 = torch.tanh(self.init_h(c))[None]
+        out, _ = self.lstm(self._step_input(ids_in, c), (h0, torch.zeros_like(h0)))
         return self.out(out)
+
+    def load_language_model(self, path) -> None:
+        """Load the embedding / LSTM / output layers from an unconditional pretraining run."""
+        state = torch.load(path, map_location="cpu")
+        keep = {k: v for k, v in state.items() if k.split(".")[0] in ("embedding", "lstm", "out")}
+        missing, unexpected = self.load_state_dict(keep, strict=False)
+        assert not unexpected and all(m.split(".")[0] in ("cond_proj", "init_h") for m in missing), (missing, unexpected)
 
     @torch.no_grad()
     def generate(self, cond: Tensor, cls_id: int, sep_id: int, max_len: int = 80, sample: bool = False,
                  top_p: float = 0.9, temperature: float = 0.8, repetition_penalty: float = 1.3) -> list[list[int]]:
         """Greedy by default; sample=True gives nucleus sampling with a repetition penalty."""
-        h = torch.tanh(self.init_h(cond))[None]
+        cp = self.cond_proj(cond)
+        h = torch.tanh(self.init_h(cp))[None]
         c = torch.zeros_like(h)
         b = cond.size(0)
         ids = torch.full((b, 1), cls_id, dtype=torch.long, device=cond.device)
         out_ids, done = [], torch.zeros(b, dtype=torch.bool, device=cond.device)
         seen = torch.zeros(b, self.out.out_features, dtype=torch.bool, device=cond.device)
         for _ in range(max_len):
-            o, (h, c) = self.lstm(self._step_input(ids, cond), (h, c))
+            o, (h, c) = self.lstm(self._step_input(ids, cp), (h, c))
             logits = self.out(o[:, -1])
             if sample:
                 logits = torch.where(seen, logits / repetition_penalty, logits) / temperature

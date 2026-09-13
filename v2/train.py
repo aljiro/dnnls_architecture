@@ -63,7 +63,7 @@ def f1(pred: torch.Tensor, true: torch.Tensor, mask: torch.Tensor) -> float:
 def evaluate(model: SequencePredictor, d: dict, s: torch.Tensor, t: torch.Tensor, mode: str,
              pad_id: int, tag: str) -> dict[str, float]:
     model.eval()
-    acc: dict[str, list] = {k: [] for k in ("img", "z", "z_true", "last", "e_pred", "e_true", "alpha", "gate",
+    acc: dict[str, list] = {k: [] for k in ("img", "z", "z_true", "last", "e_pred", "e_true", "alpha", "gate", "recon",
                                              "best_in", "copy_best", "char_logits", "target_chars", "chars_in", "n_chars")}
     ce = ce_shuf = 0.0
     n_tok = 0
@@ -73,6 +73,7 @@ def evaluate(model: SequencePredictor, d: dict, s: torch.Tensor, t: torch.Tensor
         per_in = (batch["frames"] - batch["target"][:, None]).abs().mean(dim=(2, 3, 4))   # [B, K] L1 of each input
         acc["img"].append(o["image"]); acc["z"].append(o["z"]); acc["z_true"].append(model.target_latent(batch["target"]))
         acc["last"].append(batch["frames"][:, -1]); acc["e_pred"].append(o["e_txt"]); acc["e_true"].append(batch["target_txt"])
+        acc["recon"].append(model.image_decoder(model.image_encoder(batch["target"])))   # drift of the fine-tuned autoencoder
         acc["alpha"].append(o["alpha"]); acc["gate"].append(o["gate"])
         acc["best_in"].append(per_in.argmin(1)); acc["copy_best"].append(per_in.min(1).values)
         tgt = batch["target_ids"][:, 1:]
@@ -98,6 +99,7 @@ def evaluate(model: SequencePredictor, d: dict, s: torch.Tensor, t: torch.Tensor
     near = a["copy_best"] < 0.06
     res = {
         "img_L1": F.l1_loss(a["img"], target).item(),
+        "recon_L1": F.l1_loss(a["recon"], target).item(),          # pretrained autoencoder: 0.040
         "img_L1_near_copy": F.l1_loss(a["img"][near], target[near]).item() if near.any() else float("nan"),
         "floor_median": F.l1_loss(median.expand_as(target), target).item(),
         "floor_copy": F.l1_loss(a["last"], target).item(),
@@ -143,6 +145,12 @@ def main() -> None:
     ap.add_argument("--sup-threshold", type=float, default=0.10,
                     help="windows whose closest input has L1 below this get attention supervision")
     ap.add_argument("--ae-weights", default=str(OUT / "visual_ae.pt"))
+    ap.add_argument("--text-lm-weights", default=str(OUT / "text_lm.pt"),
+                    help="unconditional language-model weights for the text decoder (v2/pretrain_text.py); '' to skip")
+    ap.add_argument("--pretrained-lr-scale", type=float, default=0.1,
+                    help="learning-rate multiplier for the pretrained image encoder/decoder (discriminative LR)")
+    ap.add_argument("--text-lm-lr-scale", type=float, default=0.3,
+                    help="learning-rate multiplier for the pretrained text decoder layers")
     ap.add_argument("--freeze-image-encoder", action="store_true")
     ap.add_argument("--tag", default="")
     args = ap.parse_args()
@@ -170,14 +178,27 @@ def main() -> None:
     text_encoder = TextEncoderLSTM(tok.vocab_size, tok.pad_token_id) if args.text_encoder == "lstm" else None
     text_dim = 384 if text_encoder is None else text_encoder.out_dim
     model = SequencePredictor(ae, text_dim, tok.vocab_size, text_encoder, word_dropout=args.word_dropout, stage=args.stage).to(DEVICE)
+    text_lm = bool(args.text_lm_weights) and Path(args.text_lm_weights).exists()
+    if text_lm:
+        model.text_decoder.load_language_model(args.text_lm_weights)
+        print(f"loaded pretrained language model into the text decoder from {args.text_lm_weights}")
     if args.freeze_image_encoder:
         for p in model.image_encoder.parameters():
             p.requires_grad = False
-    params = [p for p in model.parameters() if p.requires_grad]
-    print(f"trainable params: {sum(p.numel() for p in params):,}")
-    opt = torch.optim.AdamW(params, lr=args.lr, weight_decay=0.01)
+    # discriminative learning rates: pretrained parts move slowly, new parts at the full rate
+    image_params = [p for m in (model.image_encoder, model.image_decoder) for p in m.parameters() if p.requires_grad]
+    lm_params = [p for n, p in model.text_decoder.named_parameters() if n.split(".")[0] in ("embedding", "lstm", "out")]
+    seen = {id(p) for p in image_params + lm_params}
+    other = [p for p in model.parameters() if p.requires_grad and id(p) not in seen]
+    groups = [{"params": other, "lr": args.lr},
+              {"params": image_params, "lr": args.lr * args.pretrained_lr_scale},
+              {"params": lm_params, "lr": args.lr * (args.text_lm_lr_scale if text_lm else 1.0)}]
+    params = other + image_params + lm_params
+    print(f"trainable params: {sum(p.numel() for p in params):,}  (image enc/dec at {args.pretrained_lr_scale}x, "
+          f"text LM layers at {args.text_lm_lr_scale if text_lm else 1.0}x)")
+    opt = torch.optim.AdamW(groups, lr=args.lr, weight_decay=0.01)
     steps = args.epochs * (len(s_tr) // args.batch_size)
-    sched = torch.optim.lr_scheduler.OneCycleLR(opt, args.lr, total_steps=steps, pct_start=0.1)
+    sched = torch.optim.lr_scheduler.OneCycleLR(opt, [g["lr"] for g in groups], total_steps=steps, pct_start=0.1)
 
     t0 = time.time()
     best_val, best_state, best_epoch = float("inf"), None, 0
