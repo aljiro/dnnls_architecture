@@ -47,7 +47,7 @@ def main() -> None:
                               tok.vocab_size, text_encoder, stage=args.stage).to(DEVICE)
     model.load_state_dict(torch.load(OUT / f"predictor_stage{args.stage}_{args.text_encoder}{args.tag}.pt", map_location=DEVICE)); model.eval()
 
-    target = te["pix"][s, t].float() / 255
+    target = te["pix"][s.cpu(), t.cpu()].to(DEVICE).float() / 255
     median = target.median(0).values
     per = lambda a, b: (a - b).abs().mean(dim=(1, 2, 3))          # per-window L1
     blob = per(median.expand_as(target), target)

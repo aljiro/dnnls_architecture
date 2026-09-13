@@ -346,6 +346,33 @@ character head (F1 0.45, above "all seen", just below "in two or more inputs"); 
 decoder attending over the input descriptions, the predicted embedding and the names of the
 characters predicted present (condition gap 0.29 nats, names in the output).
 
+## 7e. Scaling: all frames, GroundCap, CLIP inputs, a wider decoder
+
+```mermaid
+flowchart LR
+    subgraph data
+        SR[StoryReasoning<br/>all 22 frames per story<br/>30k windows, was 17k]
+        GC[GroundCap<br/>52k single frames + captions<br/>pretraining only]
+    end
+    GC --> AE[visual autoencoder, width x2<br/>pretrained on 96k frames]
+    SR --> AE
+    GC --> LM[text language model<br/>pretrained on 83k captions]
+    SR --> LM
+    SR --> CLIPF[CLIP frame embeddings<br/>extra fusion input]
+    SR --> CLIPC[CLIP crop embeddings<br/>entity tokens]
+    AE --> D[stage D predictor]
+    LM --> D
+    CLIPF --> D
+    CLIPC --> D
+```
+
+With the sequence model data-limited and the frozen components the proven lever, the last
+stage scales what has capacity: 76 % more windows from the frames the caches had discarded,
+GroundCap (the single-frame dataset StoryReasoning was built from) for pretraining the
+autoencoder and the language model, frozen CLIP embeddings of frames and crops as extra inputs,
+and a twice-wider autoencoder. Resolution was left out on purpose (four times the compute for
+gains confined to reconstruction and near-copy windows). Results in ASSESSMENT.md section 11.
+
 ## 8. Where it stands
 
 | test split, 2,974 windows | notebook | v2 pass 1 | v2 pass 2 | A | B | C |

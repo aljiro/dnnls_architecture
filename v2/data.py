@@ -24,7 +24,7 @@ from data import parse_gdi_text  # noqa: E402
 CACHE = ROOT / "poc" / "cache"
 K = 4            # input frames per window
 T = 100          # tokens per description (median is 98 BERT tokens; longer ones are truncated)
-MAX_FRAMES = 10
+MAX_FRAMES = 22          # all frames of every story (scaling stage; was 10)
 TOKENIZER_NAME = "google-bert/bert-base-uncased"
 
 
@@ -45,17 +45,44 @@ def _build_tokens(split: str, n: int) -> torch.Tensor:
     return ids
 
 
+CPU_RESIDENT = ("pix", "ent_pix", "ent_clip")     # large tensors stay in CPU memory; gather() moves batches
+
+
 def load_split(split: str, device: str = "cpu", annotations: bool = False) -> dict[str, torch.Tensor]:
     d = torch.load(CACHE / f"{split}.pt")
     if annotations:                       # stage C: chain-of-thought annotations (v2/precompute_annotations.py)
         d.update(torch.load(CACHE / f"annot_{split}.pt"))
     tok_path = CACHE / f"tokens_{split}.pt"
+    if tok_path.exists() and torch.load(tok_path).shape[1] != MAX_FRAMES:
+        tok_path.unlink()                 # built for a different MAX_FRAMES
     if not tok_path.exists():
         print(f"tokenising {split} descriptions once ...", flush=True)
         torch.save(_build_tokens(split, len(d["n_frames"])), tok_path)
     d["ids"] = torch.load(tok_path)
-    d.pop("img", None)
-    return {k: v.to(device) for k, v in d.items()}
+    d["clip"] = d.pop("img")              # CLIP frame embeddings [N, MAX_FRAMES, 512]
+    out = {}
+    for k, v in d.items():
+        if k in CPU_RESIDENT:
+            out[k] = v.pin_memory() if device != "cpu" and torch.cuda.is_available() else v
+        else:
+            out[k] = v.to(device)
+    return out
+
+
+def model_kwargs(model, batch: dict) -> dict:
+    """The optional forward() arguments a given model variant needs, taken from a gathered batch."""
+    kw = {}
+    if getattr(model, "annotated", False):
+        kw.update(set_emb=batch["set_emb"], ent_slot=batch["ent_slot"])
+        if getattr(model, "entity_features", "ae") == "clip":
+            kw["ent_clip"] = batch["ent_clip"]
+        else:
+            kw["ent_pix"] = batch["ent_pix"]
+    if getattr(model, "stage", "0") == "D":
+        kw.update(chars_in=batch["chars_in"], slot_name_ids=batch["slot_name_ids"])
+    if getattr(model, "clip_input", False):
+        kw["clip"] = batch["clip"]
+    return kw
 
 
 def windows(d: dict[str, torch.Tensor], k: int = K) -> tuple[torch.Tensor, torch.Tensor]:
@@ -74,20 +101,24 @@ def all_frames(d: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
 
 
 def gather(d: dict[str, torch.Tensor], s: torch.Tensor, t: torch.Tensor, k: int = K) -> dict[str, torch.Tensor]:
-    """Assemble one batch of windows. Frames are float in [0, 1]."""
+    """Assemble one batch of windows on the device of the small tensors. Frames are float in [0, 1]."""
+    dev = d["txt"].device
     pos = t[:, None] - k + torch.arange(k, device=t.device)[None]        # [B, K]
+    sc, tc, posc = s.cpu(), t.cpu(), pos.cpu()                           # indices for the CPU-resident tensors
     out = {
-        "frames": d["pix"][s[:, None], pos].float() / 255,                # [B, K, 3, H, W]
-        "target": d["pix"][s, t].float() / 255,                           # [B, 3, H, W]
+        "frames": d["pix"][sc[:, None], posc].to(dev, non_blocking=True).float() / 255,   # [B, K, 3, H, W]
+        "target": d["pix"][sc, tc].to(dev, non_blocking=True).float() / 255,             # [B, 3, H, W]
         "txt": d["txt"][s[:, None], pos],                                 # [B, K, 384]
         "ids": d["ids"][s[:, None], pos],                                 # [B, K, T]
+        "clip": d["clip"][s[:, None], pos],                               # [B, K, 512]
         "target_txt": d["txt"][s, t],                                     # [B, 384]
         "target_ids": d["ids"][s, t],                                     # [B, T]
     }
     if "set_emb" in d:                                                    # stage C fields
         out.update({
             "set_emb": d["set_emb"][s[:, None], pos],                     # [B, K, 384]
-            "ent_pix": d["ent_pix"][s[:, None], pos],                     # [B, K, M, 3, h, w] uint8
+            "ent_pix": d["ent_pix"][sc[:, None], posc].to(dev, non_blocking=True),   # [B, K, M, 3, h, w] uint8
+            "ent_clip": d["ent_clip"][sc[:, None], posc].to(dev, non_blocking=True).float() if "ent_clip" in d else None,
             "ent_slot": d["ent_slot"][s[:, None], pos],                   # [B, K, M]
             "chars_in": d["char_present"][s[:, None], pos],               # [B, K, S] bool
             "target_chars": d["char_present"][s, t],                      # [B, S] bool

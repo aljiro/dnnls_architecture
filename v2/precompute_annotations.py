@@ -9,6 +9,7 @@ Per story and frame (up to MAX_FRAMES = 10):
   ent_slot     [N, 10, M] long           the slot index of each crop, -1 if none
   n_chars      [N] long                  number of distinct characters in the story (capped at S)
   slot_name_ids [N, S, 6] long           BERT token ids of each slot's name (from the "Name" column), padded
+  ent_clip     [N, 10, M, 512] f16       CLIP ViT-B/32 embedding of each crop (scaling stage)
 
 Output: poc/cache/annot_{split}.pt.  Run: python v2/precompute_annotations.py
 """
@@ -24,14 +25,14 @@ from pathlib import Path
 import torch
 from datasets import load_dataset
 from torchvision import transforms
-from transformers import AutoModel, AutoTokenizer, BertTokenizerFast
+from transformers import AutoModel, AutoTokenizer, BertTokenizerFast, CLIPModel, CLIPProcessor
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from data import _markdown_rows, parse_cot_grounding  # noqa: E402
 
 CACHE = ROOT / "poc" / "cache"
-MAX_FRAMES, S, M = 10, 8, 4
+MAX_FRAMES, S, M = 22, 8, 4   # all frames (was 10 until the scaling stage)
 CROP_HW = (30, 62)
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -83,6 +84,14 @@ def main() -> None:
     st = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2").to(DEVICE).eval()
     to_pix = transforms.Compose([transforms.Resize(CROP_HW), transforms.PILToTensor()])
     bert = BertTokenizerFast.from_pretrained("google-bert/bert-base-uncased")
+    clip = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(DEVICE).eval()
+    clip_proc = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+
+    def clip_embed(images: list) -> torch.Tensor:
+        pv = clip_proc(images=images, return_tensors="pt")["pixel_values"].to(DEVICE)
+        feats = clip.get_image_features(pixel_values=pv)
+        feats = feats if torch.is_tensor(feats) else feats.pooler_output
+        return torch.nn.functional.normalize(feats.float(), dim=-1).half().cpu()
 
     def embed(texts: list[str]) -> torch.Tensor:
         enc = st_tok(texts, padding=True, truncation=True, max_length=128, return_tensors="pt").to(DEVICE)
@@ -99,6 +108,7 @@ def main() -> None:
         ent_slot = torch.full((n, MAX_FRAMES, M), -1, dtype=torch.long)
         n_chars = torch.zeros(n, dtype=torch.long)
         slot_name_ids = torch.zeros(n, S, 6, dtype=torch.long)
+        ent_clip = torch.zeros(n, MAX_FRAMES, M, 512, dtype=torch.float16)
         t0 = time.time()
         for i in range(n):
             row = ds[i]
@@ -118,6 +128,7 @@ def main() -> None:
                     ids = bert(name, add_special_tokens=False).input_ids[:6]
                     slot_name_ids[i, slot, :len(ids)] = torch.tensor(ids)
             texts, idx = [], []
+            crops, crop_pos = [], []
             for f in range(min(MAX_FRAMES, len(row["images"]))):
                 if f in settings and settings[f]:
                     texts.append(settings[f]); idx.append(f)
@@ -136,15 +147,22 @@ def main() -> None:
                         x1, x2 = max(0, min(x1, W - 1)), max(1, min(x2, W))
                         y1, y2 = max(0, min(y1, H - 1)), max(1, min(y2, H))
                         if x2 > x1 and y2 > y1:
-                            ent_pix[i, f, k] = to_pix(img.crop((x1, y1, x2, y2)).convert("RGB"))
+                            crop = img.crop((x1, y1, x2, y2)).convert("RGB")
+                            ent_pix[i, f, k] = to_pix(crop)
                             ent_slot[i, f, k] = slot
+                            crops.append(crop); crop_pos.append((f, k))
                             k += 1
             if texts:
                 set_emb[i, idx] = embed(texts)
+            if crops:
+                ce = clip_embed(crops)
+                for (f, k), e in zip(crop_pos, ce):
+                    ent_clip[i, f, k] = e
             if i % 500 == 0:
                 print(f"[{split}] {i}/{n}  {time.time() - t0:.0f}s", flush=True)
         torch.save({"set_emb": set_emb, "char_present": char_present, "ent_pix": ent_pix,
-                    "ent_slot": ent_slot, "n_chars": n_chars, "slot_name_ids": slot_name_ids}, CACHE / f"annot_{split}.pt")
+                    "ent_slot": ent_slot, "n_chars": n_chars, "slot_name_ids": slot_name_ids, "ent_clip": ent_clip},
+                   CACHE / f"annot_{split}.pt")
         have = (ent_slot >= 0).sum().item()
         print(f"[{split}] saved: {have} character crops, mean chars/story {n_chars.float().mean():.2f}, "
               f"frames with setting text {(set_emb.abs().sum(-1) > 0).float().mean():.0%}, {time.time() - t0:.0f}s")

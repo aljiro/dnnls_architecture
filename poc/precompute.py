@@ -29,7 +29,7 @@ from data import parse_gdi_text  # noqa: E402
 
 CACHE = ROOT / "poc" / "cache"
 CACHE.mkdir(parents=True, exist_ok=True)
-MAX_FRAMES = 10
+MAX_FRAMES = 22   # covers every story (max frame count 22); was 10 until the scaling stage
 HW = (60, 125)
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 torch.set_num_threads(16)
