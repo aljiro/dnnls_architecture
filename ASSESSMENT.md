@@ -704,3 +704,32 @@ Costs and open items: KL weight is a real hyper-parameter (1e-3 and 1e-2 differ 
 degree); the evaluation with 5 samples per window doubles validation time; and the deepest
 lesson of the run, that sampling and not a new distance is what turns averages into pictures,
 is the argument for an adversarial or diffusion decoder if sharper samples are the goal.
+
+### 10g. Stage D with free bits (KL 3e-3, warm-up 6 epochs, 0.1 nats/dim free), 25 epochs
+
+| test split | D, KL 1e-3 (15 ep) | D, KL 1e-2 (15 ep) | D, 3e-3 + free bits (best val, epoch 12) |
+|---|---|---|---|
+| image L1, prior mean | 0.134 | 0.132 | 0.133 |
+| image L1, best of 5 samples | 0.136 | **0.125** | 0.133 |
+| image L1, average sample (blob 0.151) | 0.158 | **0.146** | 0.159 |
+| posterior sample | 0.059 | 0.096 | 0.074 |
+| sample diversity | 0.123 | 0.094 | 0.127 |
+| KL, nats | 124 | 10.8 | 55 |
+| text retrieval top-10 | 49.6 % | 47.8 % | 48.8 % |
+| character F1 at 0.3 | 0.45 | 0.44 | 0.42 |
+
+Free bits at 0.1 nats per dimension (25.6 nats total) plus a 3e-3 weight settled at 55 nats
+and behaved like the 1e-3 run: high diversity, posterior carrying most of the target, samples
+whose average scores below the blob. On this data the prior only matches the posterior when
+the channel is squeezed to about 10 nats; the intermediate setting did not give an
+intermediate result, it fell on the leaky side. The 1e-2 run remains the reference
+configuration for stage D.
+
+**Running longer does not help, and the curve says where each head peaks** (validation,
+25 epochs): best-of-5 sample L1 is lowest at epoch 6 (0.129) and worsens afterwards; the
+average-sample L1 likewise; text retrieval peaks at epoch 12 (0.476) and drifts down to
+0.463; character F1 peaks at epoch 9 (0.466) and falls to 0.413; the KL is flat from epoch 9.
+The image heads finish earlier than the text heads, so a single checkpoint chosen on
+retrieval (epoch 12) is already past the best image epoch. Twelve to fifteen epochs with
+selection on the metric you care about is the budget; there is nothing left to gain from
+epochs 15-25 on 13.6k windows.

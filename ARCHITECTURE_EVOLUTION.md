@@ -338,7 +338,9 @@ recipe of stochastic video prediction); at test time the model draws samples. Wi
 weight at 1e-3 the posterior leaks the target (124 nats) and samples are random; at 1e-2 the
 average sample beats the blob (0.146 vs 0.151) and the best of five scores 0.125, the first
 number below the deterministic ceiling, and the samples are blurred but composed pictures
-rather than smooth fields. Alongside: attention computed from frame-latent similarities,
+rather than smooth fields. An intermediate setting (3e-3 with free bits) settled at 55 nats
+and fell on the leaky side, and a 25-epoch run showed every head peaking between epochs 6 and
+12, so the 1e-2 run at 15 epochs is the reference. Alongside: attention computed from frame-latent similarities,
 supervised without touching the GRU (44 % closest-input accuracy, text unharmed); a per-slot
 character head (F1 0.45, above "all seen", just below "in two or more inputs"); and a text
 decoder attending over the input descriptions, the predicted embedding and the names of the
