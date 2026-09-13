@@ -277,3 +277,68 @@ Use `poc/` as the base. It already beats every baseline in minutes. The natural 
 | `poc/precompute.py` | frozen CLIP + MiniLM features and 60x125 frames, cached to `poc/cache/` |
 | `poc/train.py` | embedding-space next-frame predictor, baselines, metrics, figure |
 | `venv/` | Python 3.12 environment; `./venv/bin/python` |
+
+## 7. v2: the original pipeline with the fixes applied
+
+`v2/` keeps the pipeline shape of the notebook (from-scratch CNN autoencoder, text encoder,
+GRU + attention fusion, image decoder, LSTM text decoder) and applies section 5. It was
+built to teach the components as parts of one system, so each component has its own
+script and its own numbers.
+
+| component | what changed | evidence |
+|-----------|--------------|----------|
+| visual autoencoder (`v2/pretrain_visual.py`) | latent 16 -> 256, LayerNorm instead of ReLU on the latent, pretrained with L1 on all 31k training frames, no equalisation | val L1 0.040 vs 0.152 constant-image floor after 12 epochs (1 min on the GPU); `v2/out/reconstructions.png` |
+| text encoder | frozen MiniLM sentence vectors by default; `--text-encoder lstm` trains a bidirectional LSTM from scratch for comparison | MiniLM gives 3x the text retrieval of the LSTM (37 % vs 13 % top-10) |
+| fusion | fuse -> GRU(256) -> attention -> LayerNorm latent, no context head | prediction spread 0.10 (target 0.20; original model 0.00) |
+| image head | pretrained decoder, pixel L1 plus a cosine target to the encoder latent of the true next frame | test L1 0.130-0.132 vs floors 0.151 (median) and 0.170 (copy last); L1 vs a random other target 0.166, so predictions are input-specific |
+| text head | LSTM conditioned on the latent at every step; second pass added word dropout 0.3 and a head predicting the MiniLM vector of the next description | see below |
+| training data | all sliding windows, split by story | 13.6k train / 3.4k val / 3.0k test windows |
+| logging | per-epoch averages, floors, spread, retrieval, shuffled-condition CE | `v2/out/train_*.log` |
+
+**First pass** (`v2/out/train_*_pass1.log`): images worked, text did not. The text decoder
+reached perplexity 21 but its cross-entropy was 3.061 with the true latent and 3.070 with a
+shuffled one (`v2/probe.py`), i.e. it had become an unconditional language model, and every
+window greedy-decoded to the same sentence. This is the standard "decoder ignores the
+condition" failure of conditional LSTMs.
+
+**Second pass** (word dropout + text-embedding target), test split:
+
+| metric | MiniLM text | LSTM text |
+|--------|-------------|-----------|
+| image L1 (floors 0.151 / 0.170) | 0.132 | 0.132 |
+| prediction spread (target 0.204) | 0.101 | 0.096 |
+| text-embedding retrieval, top-1 / top-10 of 2,974 | 5.9 % / 37.5 % | 1.9 % / 13.1 % |
+| text CE, true latent vs shuffled latent | 3.28 vs 3.38 | 3.23 vs 3.34 |
+| text perplexity | 26.6 | 25.2 |
+| image-latent retrieval, top-10 | 0.9 % | 4.4 % |
+
+The decoder now uses its condition (a 0.10-nat gap instead of 0.01), the generated text
+varies with the window and tracks the scene (`v2/out/predictions_minilm.png`), and the
+latent carries the next description well enough for 37 % top-10 retrieval, close to the
+CLIP-based proof of concept's 58 %. The price of word dropout is a higher perplexity.
+
+One new failure appeared and is worth teaching: image-latent retrieval collapsed from 7.5 %
+(first pass) to 0.9 % while the training latent loss fell to 0.035. The image encoder is
+fine-tuned, and a cosine target to a detached copy of its own output can be satisfied by
+shrinking the latent space so every frame looks alike. The target must come from a fixed
+encoder: `--freeze-image-encoder` (results below), or an EMA copy.
+
+**Frozen image encoder** (`--freeze-image-encoder`, MiniLM text), test split: image L1
+0.133, spread 0.112, image-latent top-10 3.4 % (training latent loss 0.33, so the target
+is no longer satisfied trivially), text top-10 16 %, text CE 3.23 vs 3.34 shuffled. The
+image latent recovers part of its discriminative power, but text retrieval drops from 37 %
+to 16 %. That is the third lesson from this pipeline: one 256-d vector `z` feeds three heads
+(pixels, image latent, text embedding), and with a fixed image target the heads compete for
+it. The second pass "won" text retrieval by letting the encoder collapse, which made the image
+target free. The clean fix is to stop sharing a single bottleneck: give the text and image
+heads their own projections from the GRU state, or lower `--latent-weight`, and compare the
+three runs on the same table. The flags are in `v2/train.py`; each run is 7-9 minutes.
+
+Summary of the three v2 runs with the MiniLM text encoder (test split):
+
+| run | image L1 | spread | image-latent top-10 | text top-10 | text CE true / shuffled |
+|-----|----------|--------|---------------------|-------------|-------------------------|
+| pass 1 (no word dropout, no text target) | 0.130 | 0.100 | 7.5 % | n/a | 3.06 / 3.07 |
+| pass 2 (word dropout 0.3 + text target)  | 0.132 | 0.101 | 0.9 % | 37.5 % | 3.28 / 3.38 |
+| pass 2 + frozen image encoder            | 0.133 | 0.112 | 3.4 % | 16.2 % | 3.23 / 3.34 |
+| original notebook model (section 1)      | at floor | 0.000 | n/a | n/a | n/a |

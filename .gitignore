@@ -5,3 +5,4 @@ poc/cache/
 poc/out/*.pt
 diagnostics/out/*.pt
 checkpoints/
+v2/out/*.pt
