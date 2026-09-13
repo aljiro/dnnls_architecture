@@ -22,13 +22,9 @@ from __future__ import annotations
 
 import argparse
 import sys
-import textwrap
 import time
 from pathlib import Path
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import torch
 import torch.nn.functional as F
 
@@ -36,6 +32,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from v2.data import K, gather, load_split, tokenizer, windows  # noqa: E402
 from v2.models import SequencePredictor, TextEncoderLSTM, VisualAutoencoder, latent_loss  # noqa: E402
+from v2.visualize import make_figure  # noqa: E402
 
 OUT = ROOT / "v2" / "out"
 OUT.mkdir(parents=True, exist_ok=True)
@@ -165,25 +162,7 @@ def main() -> None:
     name = args.text_encoder + args.tag
     torch.save(model.state_dict(), OUT / f"predictor_{name}.pt")
 
-    # figure: inputs, target, prediction, with true and generated descriptions
-    model.eval()
-    pick = torch.randperm(len(s_te), device=DEVICE)[:5]
-    batch = gather(te, s_te[pick], t_te[pick])
-    with torch.no_grad():
-        img, _, z, _ = model(batch["frames"], text_input(batch, args.text_encoder), batch["target_ids"][:, :-1])
-        gen = model.text_decoder.generate(z, tok.cls_token_id, tok.sep_token_id)
-    fig, ax = plt.subplots(10, K + 2, figsize=(2.6 * (K + 2), 12), gridspec_kw={"height_ratios": [2, 1.6] * 5})
-    for r in range(5):
-        tiles = [batch["frames"][r, i] for i in range(K)] + [batch["target"][r], img[r]]
-        for c, tile in enumerate(tiles):
-            ax[2 * r, c].imshow(tile.permute(1, 2, 0).clamp(0, 1).cpu()); ax[2 * r, c].axis("off")
-            ax[2 * r + 1, c].axis("off")
-        ax[2 * r, K].set_title("target", fontsize=9); ax[2 * r, K + 1].set_title("prediction", fontsize=9)
-        true_txt = tok.decode(batch["target_ids"][r], skip_special_tokens=True)
-        ax[2 * r + 1, K].text(0, 1, textwrap.fill(true_txt[:260], 34), fontsize=6.5, va="top")
-        ax[2 * r + 1, K + 1].text(0, 1, textwrap.fill(tok.decode(gen[r])[:260], 34), fontsize=6.5, va="top")
-    plt.tight_layout(); plt.savefig(OUT / f"predictions_{name}.png", dpi=110)
-    print(f"figure: {OUT / f'predictions_{name}.png'}")
+    make_figure(model, te, tok, args.text_encoder, OUT / f"predictions_{name}.png")
     print("TEST summary:", {k: round(v, 4) for k, v in res.items()})
 
 
