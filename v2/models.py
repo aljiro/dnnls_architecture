@@ -36,17 +36,17 @@ N_SLOTS = 8            # character slots per story (see v2/precompute_annotation
 
 
 class ConvEncoder(nn.Module):
-    """60x125 image -> latent. Four stride-2 convs to a 4x8 map, then a linear layer."""
+    """60x125 image -> latent. Four stride-2 convs to a 4x8 map, then a linear layer. width scales the channels."""
 
-    def __init__(self, latent_dim: int = 256) -> None:
+    def __init__(self, latent_dim: int = 256, width: int = 1) -> None:
         super().__init__()
-        ch = [3, 32, 64, 128, 256]
+        ch = [3] + [c * width for c in (32, 64, 128, 256)]
         layers: list[nn.Module] = []
         for i in range(4):
             k, p = (5, 2) if i == 0 else (3, 1)
             layers += [nn.Conv2d(ch[i], ch[i + 1], k, stride=2, padding=p), nn.GroupNorm(8, ch[i + 1]), nn.LeakyReLU(0.1)]
         self.conv = nn.Sequential(*layers)
-        self.fc = nn.Linear(256 * 4 * 8, latent_dim)
+        self.fc = nn.Linear(ch[-1] * 4 * 8, latent_dim)
         self.norm = nn.LayerNorm(latent_dim)
 
     def forward(self, x: Tensor) -> Tensor:
@@ -56,26 +56,27 @@ class ConvEncoder(nn.Module):
 class ConvDecoder(nn.Module):
     """latent -> 60x125 image in [0, 1]."""
 
-    def __init__(self, latent_dim: int = 256) -> None:
+    def __init__(self, latent_dim: int = 256, width: int = 1) -> None:
         super().__init__()
-        self.fc = nn.Linear(latent_dim, 256 * 4 * 8)
-        ch = [256, 128, 64, 32]
+        ch = [c * width for c in (256, 128, 64, 32)]
+        self.c0 = ch[0]
+        self.fc = nn.Linear(latent_dim, ch[0] * 4 * 8)
         layers: list[nn.Module] = []
         for i in range(3):
             layers += [nn.ConvTranspose2d(ch[i], ch[i + 1], 4, stride=2, padding=1), nn.GroupNorm(8, ch[i + 1]), nn.LeakyReLU(0.1)]
-        layers += [nn.ConvTranspose2d(32, 3, 4, stride=2, padding=1), nn.Sigmoid()]
+        layers += [nn.ConvTranspose2d(ch[-1], 3, 4, stride=2, padding=1), nn.Sigmoid()]
         self.deconv = nn.Sequential(*layers)
 
     def forward(self, z: Tensor) -> Tensor:
-        x = self.deconv(self.fc(z).view(-1, 256, 4, 8))          # [B, 3, 64, 128]
+        x = self.deconv(self.fc(z).view(-1, self.c0, 4, 8))      # [B, 3, 64, 128]
         return x[:, :, :IMAGE_HW[0], :IMAGE_HW[1]]
 
 
 class VisualAutoencoder(nn.Module):
-    def __init__(self, latent_dim: int = 256) -> None:
+    def __init__(self, latent_dim: int = 256, width: int = 1) -> None:
         super().__init__()
-        self.encoder = ConvEncoder(latent_dim)
-        self.decoder = ConvDecoder(latent_dim)
+        self.encoder = ConvEncoder(latent_dim, width)
+        self.decoder = ConvDecoder(latent_dim, width)
 
     def forward(self, x: Tensor) -> Tensor:
         return self.decoder(self.encoder(x))
@@ -290,12 +291,15 @@ class SequencePredictor(nn.Module):
     def __init__(self, autoencoder: VisualAutoencoder, text_dim: int, vocab_size: int,
                  text_encoder: nn.Module | None = None, latent_dim: int = 256, hidden_dim: int = 256,
                  word_dropout: float = 0.0, text_embed_dim: int = 384, stage: str = "0",
-                 setting_dim: int = 384, copy_path: bool = False) -> None:
+                 setting_dim: int = 384, copy_path: bool = False, clip_input: bool = False,
+                 entity_features: str = "ae", clip_dim: int = 512) -> None:
         super().__init__()
-        assert stage in ("0", "A", "B", "C", "D")
+        assert stage in ("0", "A", "B", "C", "D") and entity_features in ("ae", "clip")
         self.stage = stage
         self.annotated = stage in ("C", "D")
         self.copy_path = PixelCopyPath() if copy_path else None
+        self.clip_input = clip_input                # scaling stage: frozen CLIP frame embedding as an extra input
+        self.entity_features = entity_features      # "clip": entity tokens from cached CLIP crop embeddings
         self.image_encoder = autoencoder.encoder
         self.image_decoder = autoencoder.decoder
         # frozen copy of the pretrained encoder: the latent target cannot drift while the online encoder is fine-tuned
@@ -303,7 +307,7 @@ class SequencePredictor(nn.Module):
         for p in self.target_encoder.parameters():
             p.requires_grad = False
         self.text_encoder = text_encoder                        # None -> inputs are precomputed MiniLM vectors
-        in_dim = latent_dim + text_dim + (setting_dim if self.annotated else 0)
+        in_dim = latent_dim + text_dim + (setting_dim if self.annotated else 0) + (clip_dim if clip_input else 0)
         self.fuse = nn.Sequential(nn.Linear(in_dim, hidden_dim), nn.LayerNorm(hidden_dim), nn.GELU())
         self.temporal_rnn = nn.GRU(hidden_dim, hidden_dim, batch_first=True)
         self.attention = FixedQueryAttention(hidden_dim) if stage == "0" else ContentAttention(hidden_dim)
@@ -328,7 +332,8 @@ class SequencePredictor(nn.Module):
             self.mem_name = nn.Linear(self.text_decoder.embedding.embedding_dim, hidden_dim)
         if self.annotated:
             self.slot_embedding = nn.Embedding(N_SLOTS, 64)
-            self.entity_proj = nn.Sequential(nn.Linear(latent_dim + 64, hidden_dim), nn.LayerNorm(hidden_dim), nn.GELU())
+            ent_in = (clip_dim if entity_features == "clip" else latent_dim) + 64
+            self.entity_proj = nn.Sequential(nn.Linear(ent_in, hidden_dim), nn.LayerNorm(hidden_dim), nn.GELU())
             self.entity_pool = EntityPooling(hidden_dim, hidden_dim)
             self.char_head = nn.Linear(2 * hidden_dim, N_SLOTS)
             self.setting_head = nn.Linear(2 * hidden_dim, setting_dim)
@@ -350,13 +355,16 @@ class SequencePredictor(nn.Module):
         b, k = text.shape[:2]
         return self.text_encoder(text.flatten(0, 1)).view(b, k, -1)
 
-    def encode_entities(self, ent_pix: Tensor, ent_slot: Tensor) -> tuple[Tensor, Tensor]:
-        """ent_pix [B, K, M, 3, h, w] uint8 crops, ent_slot [B, K, M] -> tokens [B, K, M, H], valid [B, K, M]"""
+    def encode_entities(self, ent_slot: Tensor, ent_pix: Tensor | None = None, ent_clip: Tensor | None = None) -> tuple[Tensor, Tensor]:
+        """ent_slot [B, K, M]; crops as ent_pix [B, K, M, 3, h, w] uint8 (encoded here) or ent_clip [B, K, M, 512]
+        -> tokens [B, K, M, H], valid [B, K, M]"""
         b, k, m = ent_slot.shape
         valid = ent_slot >= 0
-        crops = ent_pix.flatten(0, 2).float() / 255
-        crops = F.interpolate(crops, size=IMAGE_HW, mode="bilinear", align_corners=False)
-        z = self.image_encoder(crops).view(b, k, m, -1)
+        if self.entity_features == "clip":
+            z = ent_clip
+        else:
+            crops = F.interpolate(ent_pix.flatten(0, 2).float() / 255, size=IMAGE_HW, mode="bilinear", align_corners=False)
+            z = self.image_encoder(crops).view(b, k, m, -1)
         slot = self.slot_embedding(ent_slot.clamp(min=0))
         return self.entity_proj(torch.cat((z, slot), -1)), valid
 
@@ -387,16 +395,18 @@ class SequencePredictor(nn.Module):
                 set_emb: Tensor | None = None, ent_pix: Tensor | None = None, ent_slot: Tensor | None = None,
                 chars_in: Tensor | None = None, slot_name_ids: Tensor | None = None,
                 target_latent: Tensor | None = None, names_present: Tensor | None = None,
-                sample: bool = False) -> dict[str, Tensor]:
+                sample: bool = False, clip: Tensor | None = None, ent_clip: Tensor | None = None) -> dict[str, Tensor]:
         b, k = frames.shape[:2]
         zv = self.image_encoder(frames.flatten(0, 1)).view(b, k, -1)
         zt = self.encode_text(text)
         parts = [zv, zt]
         if self.annotated:
             parts.append(set_emb)
+        if self.clip_input:
+            parts.append(clip)
         x = self.fuse(torch.cat(parts, -1))
         if self.annotated:
-            ents, valid = self.encode_entities(ent_pix, ent_slot)
+            ents, valid = self.encode_entities(ent_slot, ent_pix, ent_clip)
             x = self.entity_pool(x, ents, valid)
         seq, h = self.temporal_rnn(x)
         h = h[-1]

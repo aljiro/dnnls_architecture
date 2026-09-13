@@ -20,7 +20,7 @@ import torch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from v2.data import K, gather, load_split, tokenizer, windows  # noqa: E402
+from v2.data import K, gather, load_split, model_kwargs, tokenizer, windows  # noqa: E402
 from v2.models import SequencePredictor, TextEncoderLSTM, VisualAutoencoder  # noqa: E402
 
 OUT = ROOT / "v2" / "out"
@@ -37,9 +37,7 @@ def make_figure(model: SequencePredictor, d: dict, tok, mode: str, path: Path, r
     pick = torch.randperm(len(s), generator=g)[:rows].to(s.device)
     batch = gather(d, s[pick], t[pick])
     text = batch["txt"] if mode == "minilm" else batch["ids"]
-    extra = {k: batch[k] for k in ("set_emb", "ent_pix", "ent_slot") if model.annotated}
-    if model.stage == "D":
-        extra.update(chars_in=batch["chars_in"], slot_name_ids=batch["slot_name_ids"])
+    extra = model_kwargs(model, batch)
     o = model(batch["frames"], text, batch["target_ids"][:, :-1], **extra)
     img = o["image"]
     gen = model.text_decoder.generate(o["cond"], tok.cls_token_id, tok.sep_token_id, max_len=70, sample=sample,
@@ -55,13 +53,14 @@ def make_figure(model: SequencePredictor, d: dict, tok, mode: str, path: Path, r
         if train is not None:                                     # retrieval: nearest training frame by centred latent cosine
             n = train["n_frames"]
             valid = torch.nonzero(torch.arange(train["pix"].shape[1], device=n.device)[None] < n[:, None])
-            bank = torch.cat([model.target_latent(train["pix"][valid[i:i + 512, 0], valid[i:i + 512, 1]].float() / 255)
+            vc = valid.cpu()
+            bank = torch.cat([model.target_latent(train["pix"][vc[i:i + 512, 0], vc[i:i + 512, 1]].to(DEVICE).float() / 255)
                               for i in range(0, len(valid), 512)])
             mu = bank.mean(0, keepdim=True)
             sim = torch.nn.functional.normalize(o["z"] - mu, dim=-1) @ torch.nn.functional.normalize(bank - mu, dim=-1).T
             nn_idx = sim.argmax(1)
             for r in range(rows):
-                extra_tiles[r].append(train["pix"][valid[nn_idx[r], 0], valid[nn_idx[r], 1]].float() / 255)
+                extra_tiles[r].append(train["pix"][vc[nn_idx[r].item(), 0], vc[nn_idx[r].item(), 1]].float() / 255)
             extra_names.append("retrieved (train)")
 
     cols = K + 2 + len(extra_names)
@@ -103,13 +102,17 @@ def main() -> None:
     ap.add_argument("--sample", action="store_true", help="nucleus sampling instead of greedy decoding")
     ap.add_argument("--out", default="", help="output file (default v2/out/predictions_<name>.png)")
     ap.add_argument("--copy-path", action="store_true")
+    ap.add_argument("--ae-width", type=int, default=1)
+    ap.add_argument("--clip-input", action="store_true")
+    ap.add_argument("--entity-features", choices=["ae", "clip"], default="ae")
     args = ap.parse_args()
     tok = tokenizer()
     te = load_split("test", DEVICE, annotations=args.stage in ("C", "D"))
     tr = load_split("train", DEVICE, annotations=False) if args.stage == "D" else None
     text_encoder = TextEncoderLSTM(tok.vocab_size, tok.pad_token_id) if args.text_encoder == "lstm" else None
-    model = SequencePredictor(VisualAutoencoder(), 384 if text_encoder is None else text_encoder.out_dim,
-                              tok.vocab_size, text_encoder, stage=args.stage, copy_path=args.copy_path).to(DEVICE)
+    model = SequencePredictor(VisualAutoencoder(width=args.ae_width), 384 if text_encoder is None else text_encoder.out_dim,
+                              tok.vocab_size, text_encoder, stage=args.stage, copy_path=args.copy_path,
+                              clip_input=args.clip_input, entity_features=args.entity_features).to(DEVICE)
     name = f"stage{args.stage}_{args.text_encoder}{args.tag}"
     model.load_state_dict(torch.load(OUT / f"predictor_{name}.pt", map_location=DEVICE))
     out = Path(args.out) if args.out else OUT / f"predictions_{name}.png"

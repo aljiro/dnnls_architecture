@@ -733,3 +733,40 @@ The image heads finish earlier than the text heads, so a single checkpoint chose
 retrieval (epoch 12) is already past the best image epoch. Twelve to fifteen epochs with
 selection on the metric you care about is the budget; there is nothing left to gain from
 epochs 15-25 on 13.6k windows.
+
+## 11. Scaling stage
+
+After section 10 the model's remaining limit was data and the strength of the frozen
+components, not the sequence model (every head plateaued by epoch 12 on 13.6k windows; MiniLM
+and CLIP outperformed their from-scratch counterparts by 3-4x). Three scaling steps, all
+documented here so that a reader can see what changed and why.
+
+1. **All frames of every story.** The caches were built with at most 10 frames per story;
+   stories have up to 22 (median 13). Raising `MAX_FRAMES` to 22 in `poc/precompute.py` and
+   `v2/precompute_annotations.py` uses all 44,199 training frames instead of 31,226 and gives
+   29,991 training windows instead of 17,018 (+76 %). The large uint8 tensors (frames, crops)
+   now stay in CPU memory and `gather()` moves each batch to the GPU (`v2/data.py`).
+2. **GroundCap for component pretraining.** `daniel3303/GroundCap` is the single-frame
+   dataset StoryReasoning was built from: 52,350 movie frames with grounded captions in the
+   same tag format. `v2/precompute_groundcap.py` caches frames at 60x125 and caption token ids.
+   It has no sequences, so it only feeds the two component pretraining jobs: the visual
+   autoencoder (`--extra groundcap`, ~96k frames) and the text language model (`--extra
+   groundcap`, ~83k captions). It never touches the predictor's windows or the test split.
+3. **Frozen CLIP as an extra input, and a wider decoder.** `--clip-input` concatenates the
+   cached CLIP ViT-B/32 embedding of each frame to the fusion input; `--entity-features clip`
+   builds the entity tokens from cached CLIP embeddings of the character crops (also removes
+   the crop encoding from the training step); `--width 2` doubles the channels of the
+   autoencoder (`--ae-width 2` in the trainer). The mixture, the latent target and the decoder
+   still live in the autoencoder's latent space, so the pipeline's shape is unchanged; CLIP
+   adds what the frames look like semantically, which the from-scratch encoder lacked.
+
+Resolution (120x250) was deliberately left out of this stage: it multiplies compute by four,
+raises only the reconstruction reference and the near-copy windows, and does nothing for the
+cut windows. It is worth one run only if the samples of this stage look limited by decoder
+detail rather than by content.
+
+Run: `python poc/precompute.py`, `python v2/precompute_annotations.py`,
+`python v2/precompute_groundcap.py`, then `v2/pretrain_visual.py --width 2 --extra groundcap`,
+`v2/pretrain_text.py --extra groundcap`, and `v2/train.py --stage D --copy-path --recon-weight 1
+--attn-weight 1 --kl-weight 1e-2 --clip-input --entity-features clip --ae-width 2 --ae-weights
+v2/out/visual_ae_w2.pt`.

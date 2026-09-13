@@ -1,24 +1,10 @@
 Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
-Loading weights:   0%|          | 0/398 [00:00<?, ?it/s]Loading weights: 100%|██████████| 398/398 [00:00<00:00, 51463.85it/s]
-Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|██████████| 103/103 [00:00<00:00, 13850.13it/s]
+Loading weights:   0%|          | 0/398 [00:00<?, ?it/s]Loading weights: 100%|██████████| 398/398 [00:00<00:00, 46825.61it/s]
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|██████████| 103/103 [00:00<00:00, 10820.08it/s]
 [train] 0/3552  0s
-[train] 250/3552  13s
-[train] 500/3552  25s
-[train] 750/3552  39s
-[train] 1000/3552  51s
-[train] 1250/3552  64s
-[train] 1500/3552  78s
-[train] 1750/3552  92s
-[train] 2000/3552  104s
-[train] 2250/3552  118s
-[train] 2500/3552  131s
-[train] 2750/3552  145s
-[train] 3000/3552  159s
-[train] 3250/3552  173s
-[train] 3500/3552  187s
-[train] saved 3552 stories, 31226 frames, 190s
-[test] 0/626  0s
-[test] 250/626  15s
-[test] 500/626  31s
-[test] saved 626 stories, 5478 frames, 39s
-frame-count histogram (train): [0, 0, 0, 0, 0, 70, 45, 46, 40, 34, 391]
+[train] 250/3552  39s
+[train] 500/3552  79s
+[train] 750/3552  137s
+[train] 1000/3552  192s
+[train] 1250/3552  240s
+[train] 1500/3552  280s

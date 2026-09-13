@@ -33,7 +33,7 @@ import torch.nn.functional as F
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from v2.data import K, gather, load_split, tokenizer, windows  # noqa: E402
+from v2.data import K, gather, load_split, model_kwargs, tokenizer, windows  # noqa: E402
 from v2.models import SequencePredictor, TextEncoderLSTM, VisualAutoencoder, kl_divergence, latent_loss  # noqa: E402
 from v2.visualize import make_figure  # noqa: E402
 
@@ -50,9 +50,9 @@ def text_input(batch: dict, mode: str) -> torch.Tensor:
 
 
 def run_model(model: SequencePredictor, batch: dict, mode: str, train: bool = False, sample: bool = False) -> dict:
-    extra = {k: batch[k] for k in ("set_emb", "ent_pix", "ent_slot") if model.annotated}
+    extra = model_kwargs(model, batch)
     if model.stage == "D":
-        extra.update(chars_in=batch["chars_in"], slot_name_ids=batch["slot_name_ids"], sample=sample)
+        extra["sample"] = sample
         if train:   # posterior sample and the true characters' names during training
             extra.update(target_latent=model.target_latent(batch["target"]), names_present=batch["target_chars"])
     return model(batch["frames"], text_input(batch, mode), batch["target_ids"][:, :-1], **extra)
@@ -73,7 +73,7 @@ def median_image(d: dict, s: torch.Tensor, t: torch.Tensor, tag: str) -> torch.T
     """Per-pixel median of the targets, computed once per split on the CPU (sorting 2,974 images on the GPU OOMs)."""
     key = (id(d), tag.split()[0])
     if key not in _MEDIAN_CACHE:
-        _MEDIAN_CACHE[key] = (d["pix"][s, t].float().cpu() / 255).median(0).values.to(DEVICE)
+        _MEDIAN_CACHE[key] = (d["pix"][s.cpu(), t.cpu()].float() / 255).median(0).values.to(DEVICE)
     return _MEDIAN_CACHE[key]
 
 
@@ -204,6 +204,9 @@ def main() -> None:
     ap.add_argument("--sup-threshold", type=float, default=0.10,
                     help="windows whose closest input has L1 below this get attention supervision")
     ap.add_argument("--ae-weights", default=str(OUT / "visual_ae.pt"))
+    ap.add_argument("--ae-width", type=int, default=1, help="channel multiplier of the autoencoder (must match the pretrained weights)")
+    ap.add_argument("--clip-input", action="store_true", help="scaling stage: frozen CLIP frame embeddings as an extra input")
+    ap.add_argument("--entity-features", choices=["ae", "clip"], default="ae", help="entity tokens from the autoencoder on crops, or cached CLIP crop embeddings")
     ap.add_argument("--text-lm-weights", default=str(OUT / "text_lm.pt"),
                     help="unconditional language-model weights for the text decoder (v2/pretrain_text.py); '' to skip")
     ap.add_argument("--pretrained-lr-scale", type=float, default=0.1,
@@ -242,7 +245,7 @@ def main() -> None:
     s_te, t_te = windows(te)
     print(f"stage {args.stage}  windows: train {len(s_tr)}  val {len(s_va)}  test {len(s_te)}  device {DEVICE}  text encoder {args.text_encoder}")
 
-    ae = VisualAutoencoder()
+    ae = VisualAutoencoder(width=args.ae_width)
     if Path(args.ae_weights).exists():
         ae.load_state_dict(torch.load(args.ae_weights, map_location="cpu"))
         print(f"loaded pretrained autoencoder from {args.ae_weights}")
@@ -251,7 +254,7 @@ def main() -> None:
     text_encoder = TextEncoderLSTM(tok.vocab_size, tok.pad_token_id) if args.text_encoder == "lstm" else None
     text_dim = 384 if text_encoder is None else text_encoder.out_dim
     model = SequencePredictor(ae, text_dim, tok.vocab_size, text_encoder, word_dropout=args.word_dropout, stage=args.stage,
-                              copy_path=args.copy_path).to(DEVICE)
+                              copy_path=args.copy_path, clip_input=args.clip_input, entity_features=args.entity_features).to(DEVICE)
     text_lm = bool(args.text_lm_weights) and Path(args.text_lm_weights).exists()
     if text_lm:
         model.text_decoder.load_language_model(args.text_lm_weights)
