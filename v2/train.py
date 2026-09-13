@@ -218,15 +218,18 @@ def main() -> None:
         print(f"epoch {epoch + 1:2d}/{args.epochs} ({time.time() - t0:.0f}s)  train " +
               "  ".join(f"{k} {v / (b + 1):.4f}" for k, v in sums.items()), flush=True)
         val = evaluate(model, tr_all, s_va, t_va, args.text_encoder, tok.pad_token_id, f"val e{epoch + 1}")
-        if val["img_L1"] < best_val:
-            best_val, best_epoch = val["img_L1"], epoch + 1
+        # checkpoint selection on retrieval (text + image latent), not on image L1: the pixel head
+        # overfits from epoch 1 while the other heads are still untrained (ASSESSMENT.md 10c)
+        score = -(val["text_R@10"] + val["latent_R@10"])
+        if score < best_val:
+            best_val, best_epoch = score, epoch + 1
             best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
 
     name = f"stage{args.stage}_{args.text_encoder}{args.tag}"
     res_last = evaluate(model, te, s_te, t_te, args.text_encoder, tok.pad_token_id, "TEST last epoch")
     torch.save(model.state_dict(), OUT / f"predictor_{name}_last.pt")
     model.load_state_dict(best_state)
-    res = evaluate(model, te, s_te, t_te, args.text_encoder, tok.pad_token_id, f"TEST best val img_L1 (epoch {best_epoch})")
+    res = evaluate(model, te, s_te, t_te, args.text_encoder, tok.pad_token_id, f"TEST best val retrieval (epoch {best_epoch})")
     torch.save(model.state_dict(), OUT / f"predictor_{name}.pt")
     make_figure(model, te, tok, args.text_encoder, OUT / f"predictions_{name}.png", sample=args.stage in ("B", "C"))
     print("TEST summary:", {k: round(v, 4) for k, v in res.items()})
