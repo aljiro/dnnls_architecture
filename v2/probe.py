@@ -31,15 +31,16 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 @torch.no_grad()
 def main() -> None:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--stage", choices=["0", "A", "B", "C"], default="A")
     ap.add_argument("--text-encoder", choices=["minilm", "lstm"], default="minilm")
     args = ap.parse_args()
     tok = tokenizer()
-    te = load_split("test", DEVICE)
+    te = load_split("test", DEVICE, annotations=args.stage == "C")
     s, t = windows(te)
     text_encoder = TextEncoderLSTM(tok.vocab_size, tok.pad_token_id) if args.text_encoder == "lstm" else None
     model = SequencePredictor(VisualAutoencoder(), 384 if text_encoder is None else text_encoder.out_dim,
-                              tok.vocab_size, text_encoder).to(DEVICE)
-    model.load_state_dict(torch.load(OUT / f"predictor_{args.text_encoder}.pt", map_location=DEVICE))
+                              tok.vocab_size, text_encoder, stage=args.stage).to(DEVICE)
+    model.load_state_dict(torch.load(OUT / f"predictor_stage{args.stage}_{args.text_encoder}.pt", map_location=DEVICE))
     model.eval()
 
     ce = {"true z": 0.0, "shuffled z": 0.0, "zero z": 0.0}
@@ -48,7 +49,9 @@ def main() -> None:
     for b in range(0, len(s), 64):
         batch = gather(te, s[b:b + 64], t[b:b + 64])
         text = batch["txt"] if args.text_encoder == "minilm" else batch["ids"]
-        img, _, z, _ = model(batch["frames"], text, batch["target_ids"][:, :-1])
+        extra = {k: batch[k] for k in ("set_emb", "ent_pix", "ent_slot") if model.stage == "C"}
+        o = model(batch["frames"], text, batch["target_ids"][:, :-1], **extra)
+        img, z = o["image"], o["cond"]
         tgt = batch["target_ids"][:, 1:]
         n_tok += (tgt != tok.pad_token_id).sum().item()
         perm = torch.randperm(len(z), device=DEVICE)
@@ -66,7 +69,8 @@ def main() -> None:
     # what does the decoder generate for a few windows, greedy vs sampled
     batch = gather(te, s[:3], t[:3])
     text = batch["txt"] if args.text_encoder == "minilm" else batch["ids"]
-    z = model.predict_latent(batch["frames"], text)
+    extra = {k: batch[k] for k in ("set_emb", "ent_pix", "ent_slot") if model.stage == "C"}
+    z = model(batch["frames"], text, batch["target_ids"][:, :-1], **extra)["cond"]
     for i, g in enumerate(model.text_decoder.generate(z, tok.cls_token_id, tok.sep_token_id, max_len=40)):
         print(f"greedy {i}: {tok.decode(g)[:160]}")
 

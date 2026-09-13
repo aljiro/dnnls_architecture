@@ -45,8 +45,10 @@ def _build_tokens(split: str, n: int) -> torch.Tensor:
     return ids
 
 
-def load_split(split: str, device: str = "cpu") -> dict[str, torch.Tensor]:
+def load_split(split: str, device: str = "cpu", annotations: bool = False) -> dict[str, torch.Tensor]:
     d = torch.load(CACHE / f"{split}.pt")
+    if annotations:                       # stage C: chain-of-thought annotations (v2/precompute_annotations.py)
+        d.update(torch.load(CACHE / f"annot_{split}.pt"))
     tok_path = CACHE / f"tokens_{split}.pt"
     if not tok_path.exists():
         print(f"tokenising {split} descriptions once ...", flush=True)
@@ -74,7 +76,7 @@ def all_frames(d: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
 def gather(d: dict[str, torch.Tensor], s: torch.Tensor, t: torch.Tensor, k: int = K) -> dict[str, torch.Tensor]:
     """Assemble one batch of windows. Frames are float in [0, 1]."""
     pos = t[:, None] - k + torch.arange(k, device=t.device)[None]        # [B, K]
-    return {
+    out = {
         "frames": d["pix"][s[:, None], pos].float() / 255,                # [B, K, 3, H, W]
         "target": d["pix"][s, t].float() / 255,                           # [B, 3, H, W]
         "txt": d["txt"][s[:, None], pos],                                 # [B, K, 384]
@@ -82,3 +84,14 @@ def gather(d: dict[str, torch.Tensor], s: torch.Tensor, t: torch.Tensor, k: int 
         "target_txt": d["txt"][s, t],                                     # [B, 384]
         "target_ids": d["ids"][s, t],                                     # [B, T]
     }
+    if "set_emb" in d:                                                    # stage C fields
+        out.update({
+            "set_emb": d["set_emb"][s[:, None], pos],                     # [B, K, 384]
+            "ent_pix": d["ent_pix"][s[:, None], pos],                     # [B, K, M, 3, h, w] uint8
+            "ent_slot": d["ent_slot"][s[:, None], pos],                   # [B, K, M]
+            "chars_in": d["char_present"][s[:, None], pos],               # [B, K, S] bool
+            "target_chars": d["char_present"][s, t],                      # [B, S] bool
+            "target_set": d["set_emb"][s, t],                             # [B, 384]
+            "n_chars": d["n_chars"][s],                                   # [B]
+        })
+    return out
