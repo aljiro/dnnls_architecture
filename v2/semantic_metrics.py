@@ -47,7 +47,32 @@ class ClipEmbed(torch.nn.Module):
     def train(self, mode: bool = True):
         return super().train(False)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    @staticmethod
+    def augment(x: torch.Tensor) -> torch.Tensor:
+        """Random resized crop (70-100 % of the frame), horizontal flip, slight brightness / contrast
+        jitter; batched and differentiable (affine grid), so a loss through CLIP cannot be satisfied
+        by a fixed pattern at a fixed position (the CLIP-guided-generation remedy for adversarial motifs)."""
+        b = x.size(0)
+        dev = x.device
+        scale = torch.empty(b, device=dev).uniform_(0.7, 1.0)
+        tx = (torch.rand(b, device=dev) * 2 - 1) * (1 - scale)
+        ty = (torch.rand(b, device=dev) * 2 - 1) * (1 - scale)
+        flip = torch.where(torch.rand(b, device=dev) < 0.5, -1.0, 1.0)
+        theta = torch.zeros(b, 2, 3, device=dev)
+        theta[:, 0, 0] = scale * flip
+        theta[:, 1, 1] = scale
+        theta[:, 0, 2] = tx
+        theta[:, 1, 2] = ty
+        grid = F.affine_grid(theta, list(x.shape), align_corners=False)
+        x = F.grid_sample(x, grid, mode="bilinear", padding_mode="reflection", align_corners=False)
+        contrast = torch.empty(b, 1, 1, 1, device=dev).uniform_(0.9, 1.1)
+        brightness = torch.empty(b, 1, 1, 1, device=dev).uniform_(-0.05, 0.05)
+        return ((x - 0.5) * contrast + 0.5 + brightness).clamp(0, 1)
+
+    def forward(self, x: torch.Tensor, augment: bool = False, n_views: int = 2) -> torch.Tensor:
+        """[B, 3, H, W] in [0, 1] -> unit embeddings [B, 512]; augment=True averages n_views random views."""
+        if augment:
+            return F.normalize(sum(self.forward(self.augment(x)) for _ in range(n_views)) / n_views, dim=-1)
         x = F.interpolate(x, size=(224, 224), mode="bicubic", align_corners=False)
         x = (x - self.mean) / self.std
         f = self.clip.get_image_features(pixel_values=x)

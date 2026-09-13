@@ -230,6 +230,8 @@ def main() -> None:
     ap.add_argument("--clip-loss-weight", type=float, default=0.0,
                     help="centred cosine between the CLIP embedding of the decoded image and the cached CLIP embedding of frame 5 "
                          "(differentiable through a frozen CLIP); rewards semantically right content where L1 rewards the blob")
+    ap.add_argument("--clip-augment", action="store_true",
+                    help="random differentiable augmentations (crop, flip, jitter; 2 views) before CLIP in the loss")
     ap.add_argument("--perceptual-weight", type=float, default=0.0,
                     help="VGG feature-space distance to the target added to the image loss (v2/perceptual.py)")
     ap.add_argument("--tag", default="")
@@ -309,7 +311,7 @@ def main() -> None:
             if PERCEPTUAL is not None:
                 losses["perceptual"] = args.perceptual_weight * PERCEPTUAL(o["image"], batch["target"])
             if CLIP_EMBED is not None:
-                losses["clip"] = args.clip_loss_weight * latent_loss(CLIP_EMBED(o["image"]), batch["target_clip"])
+                losses["clip"] = args.clip_loss_weight * latent_loss(CLIP_EMBED(o["image"], augment=args.clip_augment), batch["target_clip"])
             if args.stage == "D":
                 warm = min(1.0, (epoch + b / (len(s_tr) // args.batch_size)) / max(args.kl_warmup, 1e-6))
                 losses["kl"] = args.kl_weight * warm * kl_divergence(o, args.free_bits)
