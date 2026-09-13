@@ -286,6 +286,45 @@ on reconstruction and on the near-copy windows.
 
 ---
 
+## Level 10: Measuring what the eye sees, and training for it
+
+**Concept.** Metric validity: a metric must separate the outputs you can tell apart. Pixel L1
+and VGG feature distance cannot separate "right layout, blurred" from "right tint, no
+structure"; a semantic embedding can. Then the same embedding as a loss.
+
+**Build** (`v2/semantic_metrics.py`). Three measures with the usual floors: CLIP similarity
+between the decoded image and the target (centred by the mean test embedding); the Frechet
+distance between CLIP-feature distributions of a set of images and of the targets (realism of
+the set, independent of alignment); and the variance of the Laplacian as a sharpness ratio to
+the target. Then a training term: centred cosine between the CLIP embedding of the decoded
+image (differentiable through a frozen CLIP) and the cached CLIP embedding of frame 5.
+
+**Measure** (5,254 test windows, before the loss):
+
+| candidate | CLIP similarity | CLIP Frechet | sharpness / target |
+|---|---|---|---|
+| blob | 0.00 | 0.65 | 0.00 |
+| deterministic prediction (Level 5 model) | 0.074 | 0.26 | 0.02 |
+| Level 9 prediction | 0.056 | 0.33 | 0.02 |
+| Level 8 prior samples | 0.00 | 0.33 | 0.03 |
+| reconstruction, narrow / wide autoencoder | 0.08 / 0.15 | 0.33 / 0.24 | 0.07 / 0.10 |
+| copy last frame | 0.37 | 0.00 | 1.01 |
+
+**Lesson.** The predictions carried weak target semantics and scaling did not add to it; what
+looked better was the wide autoencoder's reconstruction. The variational samples had structure
+but not the target's. Everything drawn was at 2 % of the target's sharpness. And the decisive
+row: copy-last scores 0.37 against 0.00 for the blob, so under CLIP similarity a different but
+related frame beats the average by a wide margin, the property no pixel or VGG distance had.
+That makes it a loss that rewards plausibility: with it, the prediction's CLIP similarity
+reaches 0.17 within two epochs (three times the previous best, above the wide reconstruction)
+at unchanged pixel L1. Final numbers in ASSESSMENT.md section 11c.
+
+**Exercises.** Compute the three measures for the floors and show which metric ranks copy-last
+above the blob. Add the CLIP loss and plot CLIP similarity against pixel L1 over epochs. Judge
+a set of samples by Frechet distance and by best-of-K, and explain why they can disagree.
+
+---
+
 ## Reading the numbers, at every level
 
 - Report every image number for all windows and for the near-copy / cut split.
@@ -294,6 +333,7 @@ on reconstruction and on the near-copy windows.
 - For any latent, report the centred pairwise cosine between windows (collapse detector).
 - For any multi-label head, report three trivial baselines.
 - Choose checkpoints on the metric that answers the question, not on the training loss.
+- Before trusting a metric, check that it separates the floors the way your eye does.
 
 ## Where the path ends, and what lies beyond
 
