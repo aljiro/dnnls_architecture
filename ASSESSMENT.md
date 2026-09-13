@@ -342,3 +342,31 @@ Summary of the three v2 runs with the MiniLM text encoder (test split):
 | pass 2 (word dropout 0.3 + text target)  | 0.132 | 0.101 | 0.9 % | 37.5 % | 3.28 / 3.38 |
 | pass 2 + frozen image encoder            | 0.133 | 0.112 | 3.4 % | 16.2 % | 3.23 / 3.34 |
 | original notebook model (section 1)      | at floor | 0.000 | n/a | n/a | n/a |
+
+## 8. How far pixel L1 can go on this data
+
+`v2/analyze_predictability.py` splits the 2,974 test windows by whether the shot continues
+(copy-last L1 < 0.06, true for 5.9 % of windows) and compares per-window L1:
+
+| L1 vs the true next frame | all | shot continues (6 %) | shot cuts (94 %) |
+|---|---|---|---|
+| blob (median image) | 0.151 | 0.111 | 0.154 |
+| copy last frame | 0.170 | 0.041 | 0.178 |
+| oracle: best of blob or copy per window | 0.137 | 0.041 | 0.142 |
+| v2 model (MiniLM, pass 2) | 0.132 | 0.065 | 0.137 |
+| autoencoder given the true target | 0.039 | 0.021 | 0.041 |
+
+The decoder can draw the target at 0.039 when handed the true latent, so the gap to 0.132
+is not capacity. When the shot cuts, a real frame from the same story scores worse under L1
+than the blob (0.178 vs 0.154): pixel L1 penalises any sharp guess that is not pixel-aligned
+more than it penalises a blob, so reconstruction-quality predictions are unreachable under
+L1 in 94 % of windows for any architecture. The only predictable pixel content is the
+continuing-shot case, where the model is currently worse than copying; a skip path from the
+last frame with a learned gate would close that, with a ceiling near the oracle row. Anything
+beyond needs a loss that rewards plausibility instead of alignment (perceptual, adversarial,
+diffusion) or the retrieval formulation of section 4.
+
+The text head collapses to the corpus mode under greedy decoding for the analogous reason:
+the conditioning adds 0.10 nats per token against a strong style prior. Judge it by the
+cross-entropy gap and retrieval, and sample (temperature or nucleus, repetition penalty) to
+see the conditional signal in generated strings.
