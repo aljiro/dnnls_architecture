@@ -610,3 +610,40 @@ trained to draw smooth predictions and forgets how to draw sharp reconstructions
 the one from section 5, item 3: keep a reconstruction loss term on the target frame during
 sequence training (or freeze the decoder), so the component keeps the skill it was pretrained
 for. That is the next single change.
+
+### 10e. Run 1 (reconstruction term + pixel copy path) and run 2 (+ VGG perceptual loss)
+
+Both on stage C with steps 1-3 (`_run1`, `_run2`). The copy path blends the four inputs in
+pixel space with the attention weights and a per-pixel gate chooses between the blend and the
+generated image. The perceptual loss is the LPIPS-style distance of `v2/perceptual.py`
+(VGG16 relu2_2 / relu3_3 / relu4_3, weight 1.0), also reported as a metric with floors.
+
+| test split | C + steps 1-3 | run 1 | run 2 |
+|---|---|---|---|
+| image L1 | 0.131 | 0.132 | **0.131** |
+| L1 on near-copy windows | 0.073 | **0.071** | 0.074 |
+| reconstruction L1 of the fine-tuned autoencoder | 0.080 | **0.041** | **0.041** |
+| copy gate, near-copy / cut windows | n/a | 0.28 / 0.16 | 0.01 / 0.00 |
+| perceptual distance: model / blob / copy-last / reconstruction | n/a | n/a | 0.083 / 0.086 / 0.098 / 0.077 |
+| image-latent retrieval top-10 | 7.8 % | 8.7 % | **8.9 %** |
+| text retrieval top-10 | 45.7 % | 45.0 % | 43.6 % |
+| text CE, true / shuffled | 2.75 / 2.81 | 2.75 / 2.81 | 2.75 / 2.81 |
+
+**The reconstruction term works exactly as intended**: the fine-tuned autoencoder stays at
+0.041 instead of drifting to 0.080, at no cost elsewhere. It should stay on.
+
+**The copy path does what the ceiling analysis said**: near-copy windows improve a little
+(0.073 -> 0.071), the per-pixel gate opens more on near-copy windows than on cuts (0.28 vs
+0.16), and overall L1 does not move. In the figure the gate shows as faint ghosted structure
+from the inputs on cut windows, which is what a pixel blend does when no input is right.
+
+**The perceptual loss does not change the picture.** The model's feature distance beats the
+blob's by a small margin (0.083 vs 0.086) and copy-last by more (0.098), pixel L1 stays at its
+best value, and the images look as smooth as before. The copy gate closes (0.01), because in
+feature space a misaligned copy costs more than a blur. Calibration explains why: no VGG layer
+set ranks a real but different shot above the blob (early layers: blob 0.133, best input
+0.134; deep layers: everything at 0.03), so a feature-space loss still averages over the
+plausible next shots on the 85 % of windows that cut. Sharper output on those windows needs a
+loss that scores samples rather than expectations (adversarial or diffusion), or the retrieval
+formulation. Under the objectives available here, run 2 is the final state of the L1-family
+image head: 0.131 against floors of 0.151 and 0.170, with the autoencoder intact.
