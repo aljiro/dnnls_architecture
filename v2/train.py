@@ -124,7 +124,10 @@ def evaluate(model: SequencePredictor, d: dict, s: torch.Tensor, t: torch.Tensor
         Z["e_pred"].append(o["e_txt"]); Z["e_true"].append(batch["target_txt"])
         tgt = batch["target_ids"][:, 1:]
         ce += F.cross_entropy(o["logits"].flatten(0, 1), tgt.flatten(), ignore_index=pad_id, reduction="sum").item()
-        logits_shuf = model.text_decoder(batch["target_ids"][:, :-1], o["cond"][torch.randperm(len(tgt), device=DEVICE)])
+        perm = torch.randperm(len(tgt), device=DEVICE)
+        logits_shuf = model.text_decoder(batch["target_ids"][:, :-1], o["cond"][perm],
+                                         o["memory"][perm] if "memory" in o else None,
+                                         o["memory_mask"][perm] if "memory_mask" in o else None)
         ce_shuf += F.cross_entropy(logits_shuf.flatten(0, 1), tgt.flatten(), ignore_index=pad_id, reduction="sum").item()
         n_tok += (tgt != pad_id).sum().item()
         if model.annotated:

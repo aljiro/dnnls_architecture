@@ -314,6 +314,36 @@ so a feature distance still averages over the plausible next shots where the sho
 closes the L1-family image head; anything sharper needs a loss over samples (adversarial,
 diffusion) or the retrieval formulation.
 
+## 7d. Stage D: a variational latent and the remaining heads
+
+```mermaid
+flowchart LR
+    ZV[frame latents zv_1..4] --> SIM[latent-similarity attention<br/>window-centred cosines + position<br/>supervised toward the closest input] --> MIX[mixture / pixel copy path]
+    HC[GRU state h, context] --> PR[prior N mu_p, s_p]
+    HC --> PO[posterior N mu_q, s_q<br/>+ frozen target latent, training only]
+    PR --> KL[KL q || p]
+    PO --> KL
+    PO --> Z[residual sample] --> DEC[decoder] --> L1[pixel L1]
+    PR -. test: mean or samples .-> Z
+    HC --> SLOT[per-slot character head<br/>own history + entity token]
+    SLOT --> NAMES[names of predicted characters]
+    NAMES --> MEM[memory: 4 descriptions, text embedding, names]
+    MEM --> TD[text decoder with cross-attention]
+```
+
+The last image-side idea is not a new distance but a different quantity to predict: a
+distribution over latents instead of one latent. A prior from the sequence state and a
+posterior that also sees the target's latent are trained with a KL term (the conditional-VAE
+recipe of stochastic video prediction); at test time the model draws samples. With the KL
+weight at 1e-3 the posterior leaks the target (124 nats) and samples are random; at 1e-2 the
+average sample beats the blob (0.146 vs 0.151) and the best of five scores 0.125, the first
+number below the deterministic ceiling, and the samples are blurred but composed pictures
+rather than smooth fields. Alongside: attention computed from frame-latent similarities,
+supervised without touching the GRU (44 % closest-input accuracy, text unharmed); a per-slot
+character head (F1 0.45, above "all seen", just below "in two or more inputs"); and a text
+decoder attending over the input descriptions, the predicted embedding and the names of the
+characters predicted present (condition gap 0.29 nats, names in the output).
+
 ## 8. Where it stands
 
 | test split, 2,974 windows | notebook | v2 pass 1 | v2 pass 2 | A | B | C |
@@ -353,6 +383,16 @@ loss that rewards plausibility rather than alignment.
 ---
 
 ## 9. Techniques and concepts used, and where
+
+### Generative modelling
+- **Conditional variational autoencoder for prediction** (stage D): prior and posterior
+  Gaussians over the residual latent, the reparameterisation trick, KL(q || p) with warm-up,
+  posterior sampling during training and prior sampling at test; the KL weight as the knob
+  between "posterior leaks the target" (1e-3, 124 nats) and "prior matches" (1e-2, 11 nats).
+- **Why sampling beats averaging on a multimodal target**: the mean of plausible next shots is
+  a blob, a sample is a picture; evaluated with best-of-K, average-sample and diversity.
+- **Retrieval as output**: the nearest training frame to the predicted latent, shown next to
+  the decoded prediction.
 
 ### Representation learning
 - **Convolutional autoencoder, pretrained with a reconstruction loss** (`v2/pretrain_visual.py`):
