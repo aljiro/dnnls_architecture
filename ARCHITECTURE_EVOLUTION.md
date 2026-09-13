@@ -265,7 +265,10 @@ best threshold, equal to the "everyone seen so far" baseline and below "present 
 two of the four inputs" (0.47): it learned the prior, not the pattern. Two data facts fell
 out: frame 3's characters predict frame 5's better than frame 4's (0.44 vs 0.38), the editing
 rhythm again; and per-character history is the signal, which a head on the pooled state cannot
-exploit slot by slot. The setting conditioning had no visible effect.
+exploit slot by slot. The setting conditioning had no visible effect. Training the same model
+for 30 epochs made every metric except the language model's worse (image L1 0.140, text
+retrieval 40 %); validation image L1 is lowest at epoch 1 and rises from there, so the pixel
+head overfits 13.6k windows immediately and 12-15 epochs is the budget.
 
 ---
 
