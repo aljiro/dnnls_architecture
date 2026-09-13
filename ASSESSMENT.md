@@ -694,6 +694,12 @@ text retrieval, which the coupled version could not (section 10b). The prior mea
 point estimate for image-latent retrieval (3.5 %): with a stochastic latent, retrieval should
 use samples, or the posterior mean of the training set.
 
+The figures show the trade-off the KL weight sets: at 1e-3
+(`predictions_stageD_minilm.png`) the samples are visibly composed and different from each
+other but not tied to the inputs; at 1e-2 (`predictions_stageD_minilm_kl1e-2.png`) they are
+tied to the inputs, score better, and sit visibly closer to the mean. A value between the two
+(3e-3), or free bits, is the natural next test.
+
 Costs and open items: KL weight is a real hyper-parameter (1e-3 and 1e-2 differ in kind, not
 degree); the evaluation with 5 samples per window doubles validation time; and the deepest
 lesson of the run, that sampling and not a new distance is what turns averages into pictures,
