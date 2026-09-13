@@ -1,0 +1,10 @@
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+stage C  windows: train 13625  val 3393  test 2974  device cuda  text encoder minilm
+loaded pretrained autoencoder from /home/aljiro/dev/dnnls_architecture/v2/out/visual_ae.pt
+trainable params: 24,627,302
+epoch  1/30 (41s)  train pixel 0.1307  latent 0.6471  text 7.6105  emb 0.9940  chars 0.5541  setting 0.8962
+[val e1] img_L1=0.1288  img_L1_near_copy=0.0772  floor_median=0.1519  floor_copy=0.1665  pred_spread=0.1019  latent_cos=0.0573  alpha_on_best_input=0.2655  alpha_argmax_acc_near=0.2860  gate_near_copy=0.9205  gate_cut=0.9152  latent_R@10=0.0327  text_R@10=0.0083  text_CE=5.90  text_CE_shuffled=5.90  char_F1=0.0027  char_F1_same_as_frame4=0.3820  char_F1_all_seen=0.4059
+epoch  2/30 (87s)  train pixel 0.1293  latent 0.6138  text 5.7959  emb 0.7937  chars 0.5135  setting 0.5157
+[val e2] img_L1=0.1309  img_L1_near_copy=0.0771  floor_median=0.1519  floor_copy=0.1665  pred_spread=0.1292  latent_cos=0.0119  alpha_on_best_input=0.2664  alpha_argmax_acc_near=0.2969  gate_near_copy=0.9372  gate_cut=0.9405  latent_R@10=0.0342  text_R@10=0.0822  text_CE=5.50  text_CE_shuffled=5.52  char_F1=0.1097  char_F1_same_as_frame4=0.3820  char_F1_all_seen=0.4059
+epoch  3/30 (133s)  train pixel 0.1296  latent 0.6079  text 5.2400  emb 0.6794  chars 0.4947  setting 0.4225
+[val e3] img_L1=0.1293  img_L1_near_copy=0.0771  floor_median=0.1519  floor_copy=0.1665  pred_spread=0.0919  latent_cos=0.0511  alpha_on_best_input=0.2673  alpha_argmax_acc_near=0.3206  gate_near_copy=0.9520  gate_cut=0.9475  latent_R@10=0.0377  text_R@10=0.1986  text_CE=4.64  text_CE_shuffled=4.67  char_F1=0.1868  char_F1_same_as_frame4=0.3820  char_F1_all_seen=0.4059
