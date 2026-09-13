@@ -37,6 +37,7 @@ python v2/pretrain_visual.py        # pretrain the visual autoencoder
 python v2/train.py                  # sequence predictor with MiniLM text encoder
 python v2/train.py --text-encoder lstm --freeze-image-encoder
 python v2/probe.py                  # does the decoder use its condition?
+python v2/visualize.py --tag _frozen # prediction figure from a checkpoint
 ```
 
 Use `./venv/bin/python` (Python 3.12 venv in the repo).
