@@ -377,6 +377,19 @@ scaled model gains ten points of text retrieval (41.5 -> 51.6 %), a lower text c
 every image-prediction number stays within 0.003: the parts that were data-limited moved, the
 part that is objective-limited did not.
 
+## 7f. A metric for what the eye sees, and a loss from it
+
+The scaled model looked better and pixel L1 said nothing had changed. Three semantic
+measures settled it (`v2/semantic_metrics.py`): CLIP similarity to the target, a CLIP-feature
+Frechet distance, and sharpness. They showed that the predictions' target semantics had not
+grown (0.056 vs 0.074 for the deterministic model), that the variational samples carried none,
+that every drawn image was at 2 % of the target's sharpness, and that the visible gain was the
+wide autoencoder's reconstruction (0.08 -> 0.15). They also showed the one property every
+earlier distance lacked: copy-last scores 0.37 against 0.00 for the blob, so CLIP similarity
+rewards a related frame over the average. Used as a training term through a frozen CLIP, it
+triples the prediction's CLIP similarity within two epochs at unchanged pixel L1; the full
+result is in ASSESSMENT.md 11c.
+
 ## 8. Where it stands
 
 | test split, 2,974 windows | notebook | v2 pass 1 | v2 pass 2 | A | B | C |
@@ -426,6 +439,12 @@ loss that rewards plausibility rather than alignment.
   a blob, a sample is a picture; evaluated with best-of-K, average-sample and diversity.
 - **Retrieval as output**: the nearest training frame to the predicted latent, shown next to
   the decoded prediction.
+
+### Evaluation of generated images
+- **Metric validity**: pixel L1 and VGG distance rank the blob above a related real frame; CLIP
+  similarity does not. A metric is only useful if it separates the floors the way the eye does.
+- **CLIP similarity, CLIP-feature Frechet distance, Laplacian sharpness** with floors.
+- **A semantic loss**: the same CLIP similarity, differentiable through a frozen encoder.
 
 ### Representation learning
 - **Convolutional autoencoder, pretrained with a reconstruction loss** (`v2/pretrain_visual.py`):
