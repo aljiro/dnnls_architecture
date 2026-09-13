@@ -300,6 +300,20 @@ and 52 % (A), image L1 0.131 / 0.132. The new reconstruction monitor shows the a
 still drifts to 0.080 from its pretrained 0.040 even at the low rate, which points to the
 next change: a reconstruction term during sequence training.
 
+## 7c. Reconstruction term, pixel copy path, perceptual loss
+
+Two final image-side runs. A reconstruction loss on the target frame during sequence training
+keeps the fine-tuned autoencoder at its pretrained 0.041 instead of drifting to 0.080, at no
+cost to anything else. A pixel copy path (attention-weighted blend of the four inputs, per-pixel
+gate against the generated image) improves the near-copy windows slightly (0.073 -> 0.071) and
+its gate opens more on those windows than on cuts (0.28 vs 0.16), as the ceiling analysis
+predicted. A VGG perceptual loss (relu2_2..relu4_3) beats the blob in feature space by a small
+margin (0.083 vs 0.086) and leaves pixel L1 at its best (0.131) and the images as smooth as
+before: calibration showed that no VGG layer set ranks a real but different shot above the blob,
+so a feature distance still averages over the plausible next shots where the shot cuts. That
+closes the L1-family image head; anything sharper needs a loss over samples (adversarial,
+diffusion) or the retrieval formulation.
+
 ## 8. Where it stands
 
 | test split, 2,974 windows | notebook | v2 pass 1 | v2 pass 2 | A | B | C |

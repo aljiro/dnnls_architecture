@@ -205,14 +205,35 @@ class EntityPooling(nn.Module):
         return self.norm(x + torch.einsum("bkm,bkmh->bkh", alpha, self.v(ents)))
 
 
+class PixelCopyPath(nn.Module):
+    """Blend the input frames in pixel space with the attention weights, then let a per-pixel gate
+    choose between that blend and the generated image.
+
+    Inputs to the gate: the generated image, the blend, and the attention-weighted variance of the
+    inputs around the blend (high where the inputs disagree, so copying is risky)."""
+
+    def __init__(self, width: int = 16) -> None:
+        super().__init__()
+        self.net = nn.Sequential(nn.Conv2d(9, width, 3, padding=1), nn.LeakyReLU(0.1),
+                                 nn.Conv2d(width, width, 3, padding=1), nn.LeakyReLU(0.1),
+                                 nn.Conv2d(width, 1, 3, padding=1))
+
+    def forward(self, generated: Tensor, frames: Tensor, alpha: Tensor) -> tuple[Tensor, Tensor]:
+        blend = torch.einsum("bk,bkchw->bchw", alpha, frames)
+        var = torch.einsum("bk,bkchw->bchw", alpha, (frames - blend[:, None]) ** 2)
+        gate = torch.sigmoid(self.net(torch.cat((generated, blend, var), 1)))      # [B, 1, H, W]
+        return gate * blend + (1 - gate) * generated, gate
+
+
 class SequencePredictor(nn.Module):
     def __init__(self, autoencoder: VisualAutoencoder, text_dim: int, vocab_size: int,
                  text_encoder: nn.Module | None = None, latent_dim: int = 256, hidden_dim: int = 256,
                  word_dropout: float = 0.0, text_embed_dim: int = 384, stage: str = "0",
-                 setting_dim: int = 384) -> None:
+                 setting_dim: int = 384, copy_path: bool = False) -> None:
         super().__init__()
         assert stage in ("0", "A", "B", "C")
         self.stage = stage
+        self.copy_path = PixelCopyPath() if copy_path else None
         self.image_encoder = autoencoder.encoder
         self.image_decoder = autoencoder.decoder
         # frozen copy of the pretrained encoder: the latent target cannot drift while the online encoder is fine-tuned
@@ -302,8 +323,11 @@ class SequencePredictor(nn.Module):
             out["char_logits"] = self.char_head(hc)
             out["setting"] = self.setting_head(hc)
             z_img = z + self.setting_to_latent(out["setting"])
-        out.update({"image": self.image_decoder(z_img), "logits": self.text_decoder(target_ids_in, cond),
+        generated = self.image_decoder(z_img)
+        out.update({"image": generated, "generated": generated, "logits": self.text_decoder(target_ids_in, cond),
                     "z": z, "z_txt": z_txt, "e_txt": e_txt, "cond": cond})
+        if self.copy_path is not None:
+            out["image"], out["copy_gate"] = self.copy_path(generated, frames, alpha)
         return out
 
     @torch.no_grad()

@@ -79,12 +79,13 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--sample", action="store_true", help="nucleus sampling instead of greedy decoding")
     ap.add_argument("--out", default="", help="output file (default v2/out/predictions_<name>.png)")
+    ap.add_argument("--copy-path", action="store_true")
     args = ap.parse_args()
     tok = tokenizer()
     te = load_split("test", DEVICE, annotations=args.stage == "C")
     text_encoder = TextEncoderLSTM(tok.vocab_size, tok.pad_token_id) if args.text_encoder == "lstm" else None
     model = SequencePredictor(VisualAutoencoder(), 384 if text_encoder is None else text_encoder.out_dim,
-                              tok.vocab_size, text_encoder, stage=args.stage).to(DEVICE)
+                              tok.vocab_size, text_encoder, stage=args.stage, copy_path=args.copy_path).to(DEVICE)
     name = f"stage{args.stage}_{args.text_encoder}{args.tag}"
     model.load_state_dict(torch.load(OUT / f"predictor_{name}.pt", map_location=DEVICE))
     out = Path(args.out) if args.out else OUT / f"predictions_{name}.png"

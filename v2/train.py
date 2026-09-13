@@ -37,6 +37,8 @@ from v2.data import K, gather, load_split, tokenizer, windows  # noqa: E402
 from v2.models import SequencePredictor, TextEncoderLSTM, VisualAutoencoder, latent_loss  # noqa: E402
 from v2.visualize import make_figure  # noqa: E402
 
+PERCEPTUAL = None      # set in main() when --perceptual-weight > 0
+
 OUT = ROOT / "v2" / "out"
 OUT.mkdir(parents=True, exist_ok=True)
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -59,51 +61,79 @@ def f1(pred: torch.Tensor, true: torch.Tensor, mask: torch.Tensor) -> float:
     return 2 * tp / max(1, 2 * tp + fp + fn)
 
 
+_MEDIAN_CACHE: dict = {}
+
+
+def median_image(d: dict, s: torch.Tensor, t: torch.Tensor, tag: str) -> torch.Tensor:
+    """Per-pixel median of the targets, computed once per split on the CPU (sorting 2,974 images on the GPU OOMs)."""
+    key = (id(d), tag.split()[0])
+    if key not in _MEDIAN_CACHE:
+        _MEDIAN_CACHE[key] = (d["pix"][s, t].float().cpu() / 255).median(0).values.to(DEVICE)
+    return _MEDIAN_CACHE[key]
+
+
 @torch.no_grad()
 def evaluate(model: SequencePredictor, d: dict, s: torch.Tensor, t: torch.Tensor, mode: str,
              pad_id: int, tag: str) -> dict[str, float]:
+    """Streaming evaluation: per-window scalars are accumulated, images never are (GPU memory)."""
     model.eval()
-    acc: dict[str, list] = {k: [] for k in ("img", "z", "z_true", "last", "e_pred", "e_true", "alpha", "gate", "recon",
-                                             "best_in", "copy_best", "char_logits", "target_chars", "chars_in", "n_chars")}
+    torch.cuda.empty_cache()
+    median = median_image(d, s, t, tag)
+    n = len(s)
+    per = lambda a, b: (a - b).abs().mean(dim=(1, 2, 3))
+    W: dict[str, list] = {k: [] for k in ("l1", "l1_blob", "l1_copy", "l1_recon", "copy_best", "best_in", "alpha", "gate",
+                                          "copy_gate", "perc_model", "perc_blob", "perc_copy", "perc_recon",
+                                          "char_logits", "target_chars", "chars_in", "n_chars")}
+    Z: dict[str, list] = {k: [] for k in ("z", "z_true", "e_pred", "e_true")}
+    img_sum = torch.zeros(3, 60, 125, device=DEVICE); img_sq = torch.zeros_like(img_sum)
     ce = ce_shuf = 0.0
     n_tok = 0
-    for b in range(0, len(s), 64):
+    for b in range(0, n, 64):
         batch = gather(d, s[b:b + 64], t[b:b + 64])
         o = run_model(model, batch, mode)
-        per_in = (batch["frames"] - batch["target"][:, None]).abs().mean(dim=(2, 3, 4))   # [B, K] L1 of each input
-        acc["img"].append(o["image"]); acc["z"].append(o["z"]); acc["z_true"].append(model.target_latent(batch["target"]))
-        acc["last"].append(batch["frames"][:, -1]); acc["e_pred"].append(o["e_txt"]); acc["e_true"].append(batch["target_txt"])
-        acc["recon"].append(model.image_decoder(model.image_encoder(batch["target"])))   # drift of the fine-tuned autoencoder
-        acc["alpha"].append(o["alpha"]); acc["gate"].append(o["gate"])
-        acc["best_in"].append(per_in.argmin(1)); acc["copy_best"].append(per_in.min(1).values)
+        target, img = batch["target"], o["image"]
+        per_in = (batch["frames"] - target[:, None]).abs().mean(dim=(2, 3, 4))            # [B, K]
+        recon = model.image_decoder(model.image_encoder(target))
+        W["l1"].append(per(img, target)); W["l1_blob"].append(per(median.expand_as(target), target))
+        W["l1_copy"].append(per(batch["frames"][:, -1], target)); W["l1_recon"].append(per(recon, target))
+        W["copy_best"].append(per_in.min(1).values); W["best_in"].append(per_in.argmin(1))
+        W["alpha"].append(o["alpha"]); W["gate"].append(o["gate"])
+        if "copy_gate" in o:
+            W["copy_gate"].append(o["copy_gate"].mean(dim=(1, 2, 3)))
+        if PERCEPTUAL is not None:
+            W["perc_model"].append(PERCEPTUAL(img, target, reduce=False))
+            W["perc_blob"].append(PERCEPTUAL(median.expand_as(target), target, reduce=False))
+            W["perc_copy"].append(PERCEPTUAL(batch["frames"][:, -1], target, reduce=False))
+            W["perc_recon"].append(PERCEPTUAL(recon, target, reduce=False))
+        img_sum += img.sum(0); img_sq += (img ** 2).sum(0)
+        Z["z"].append(o["z"]); Z["z_true"].append(model.target_latent(target))
+        Z["e_pred"].append(o["e_txt"]); Z["e_true"].append(batch["target_txt"])
         tgt = batch["target_ids"][:, 1:]
         ce += F.cross_entropy(o["logits"].flatten(0, 1), tgt.flatten(), ignore_index=pad_id, reduction="sum").item()
-        perm = torch.randperm(len(tgt), device=DEVICE)
-        logits_shuf = model.text_decoder(batch["target_ids"][:, :-1], o["cond"][perm])
+        logits_shuf = model.text_decoder(batch["target_ids"][:, :-1], o["cond"][torch.randperm(len(tgt), device=DEVICE)])
         ce_shuf += F.cross_entropy(logits_shuf.flatten(0, 1), tgt.flatten(), ignore_index=pad_id, reduction="sum").item()
         n_tok += (tgt != pad_id).sum().item()
         if model.stage == "C":
-            acc["char_logits"].append(o["char_logits"]); acc["target_chars"].append(batch["target_chars"])
-            acc["chars_in"].append(batch["chars_in"]); acc["n_chars"].append(batch["n_chars"])
-    a = {k: torch.cat(v) for k, v in acc.items() if v}
-    target = d["pix"][s, t].float() / 255
-    median = target.median(0).values
-    ar = torch.arange(len(s), device=DEVICE)
-    # retrieval and cosine on centred vectors (subtract the mean of the true targets), see centred_cosine_loss
+            W["char_logits"].append(o["char_logits"]); W["target_chars"].append(batch["target_chars"])
+            W["chars_in"].append(batch["chars_in"]); W["n_chars"].append(batch["n_chars"])
+        del o, img, recon, batch
+    a = {k: torch.cat(v) for k, v in {**W, **Z}.items() if v}
+    ar = torch.arange(n, device=DEVICE)
     def centred(x, ref):
         return F.normalize(x - ref.mean(0, keepdim=True), dim=-1)
     hit_z = (centred(a["z"], a["z_true"]) @ centred(a["z_true"], a["z_true"]).T).argsort(1, descending=True) == ar[:, None]
     hit_t = (centred(a["e_pred"], a["e_true"]) @ centred(a["e_true"], a["e_true"]).T).argsort(1, descending=True) == ar[:, None]
     zn = centred(a["z"][:512], a["z_true"])
-    cos = (zn @ zn.T)
+    cos = zn @ zn.T
     near = a["copy_best"] < 0.06
+    mean_img = img_sum / n
     res = {
-        "img_L1": F.l1_loss(a["img"], target).item(),
-        "recon_L1": F.l1_loss(a["recon"], target).item(),          # pretrained autoencoder: 0.040
-        "img_L1_near_copy": F.l1_loss(a["img"][near], target[near]).item() if near.any() else float("nan"),
-        "floor_median": F.l1_loss(median.expand_as(target), target).item(),
-        "floor_copy": F.l1_loss(a["last"], target).item(),
-        "pred_spread": a["img"].std(0).mean().item(),
+        "img_L1": a["l1"].mean().item(),
+        "recon_L1": a["l1_recon"].mean().item(),                 # pretrained autoencoder: 0.040
+        "img_L1_near_copy": a["l1"][near].mean().item() if near.any() else float("nan"),
+        "floor_median": a["l1_blob"].mean().item(),
+        "floor_copy": a["l1_copy"].mean().item(),
+        "pred_spread": (img_sq / n - mean_img ** 2).clamp(min=0).sqrt().mean().item(),
         "latent_cos": ((cos.sum() - cos.diag().sum()) / (len(zn) * (len(zn) - 1))).item(),
         "alpha_on_best_input": a["alpha"].gather(1, a["best_in"][:, None]).mean().item(),
         "alpha_argmax_acc_near": (a["alpha"].argmax(1) == a["best_in"])[near].float().mean().item() if near.any() else float("nan"),
@@ -114,6 +144,12 @@ def evaluate(model: SequencePredictor, d: dict, s: torch.Tensor, t: torch.Tensor
         "text_CE": ce / n_tok,
         "text_CE_shuffled": ce_shuf / n_tok,
     }
+    if "perc_model" in a:
+        for k in ("perc_model", "perc_blob", "perc_copy", "perc_recon"):
+            res[k] = a[k].mean().item()
+    if "copy_gate" in a:
+        res["copy_gate_near"] = a["copy_gate"][near].mean().item() if near.any() else float("nan")
+        res["copy_gate_cut"] = a["copy_gate"][~near].mean().item()
     if model.stage == "C":
         mask = torch.arange(a["target_chars"].size(1), device=DEVICE)[None] < a["n_chars"][:, None]
         true = a["target_chars"]
@@ -152,12 +188,21 @@ def main() -> None:
     ap.add_argument("--text-lm-lr-scale", type=float, default=0.3,
                     help="learning-rate multiplier for the pretrained text decoder layers")
     ap.add_argument("--freeze-image-encoder", action="store_true")
+    ap.add_argument("--copy-path", action="store_true", help="pixel copy path over the four inputs with a per-pixel gate")
+    ap.add_argument("--recon-weight", type=float, default=0.0,
+                    help="L1 of decoder(encoder(target)) during training, so the autoencoder keeps its reconstruction skill")
+    ap.add_argument("--perceptual-weight", type=float, default=0.0,
+                    help="VGG feature-space distance to the target added to the image loss (v2/perceptual.py)")
     ap.add_argument("--tag", default="")
     args = ap.parse_args()
     torch.manual_seed(0)
     tok = tokenizer()
     annot = args.stage == "C"
 
+    global PERCEPTUAL
+    if args.perceptual_weight > 0:
+        from v2.perceptual import VGGPerceptual
+        PERCEPTUAL = VGGPerceptual().to(DEVICE)
     tr_all, te = load_split("train", DEVICE, annot), load_split("test", DEVICE, annot)
     n = len(tr_all["n_frames"])
     perm = torch.randperm(n, device=DEVICE)                     # same split for every stage (seed 0)
@@ -177,7 +222,8 @@ def main() -> None:
         print("WARNING: no pretrained autoencoder found (run v2/pretrain_visual.py first)")
     text_encoder = TextEncoderLSTM(tok.vocab_size, tok.pad_token_id) if args.text_encoder == "lstm" else None
     text_dim = 384 if text_encoder is None else text_encoder.out_dim
-    model = SequencePredictor(ae, text_dim, tok.vocab_size, text_encoder, word_dropout=args.word_dropout, stage=args.stage).to(DEVICE)
+    model = SequencePredictor(ae, text_dim, tok.vocab_size, text_encoder, word_dropout=args.word_dropout, stage=args.stage,
+                              copy_path=args.copy_path).to(DEVICE)
     text_lm = bool(args.text_lm_weights) and Path(args.text_lm_weights).exists()
     if text_lm:
         model.text_decoder.load_language_model(args.text_lm_weights)
@@ -217,6 +263,10 @@ def main() -> None:
                                                            ignore_index=tok.pad_token_id),
                 "emb": args.text_embed_weight * latent_loss(o["e_txt"], batch["target_txt"]),
             }
+            if PERCEPTUAL is not None:
+                losses["perceptual"] = args.perceptual_weight * PERCEPTUAL(o["image"], batch["target"])
+            if args.recon_weight > 0:
+                losses["recon"] = args.recon_weight * F.l1_loss(model.image_decoder(model.image_encoder(batch["target"])), batch["target"])
             if args.attn_weight > 0 or args.gate_weight > 0:
                 per_in = (batch["frames"] - batch["target"][:, None]).abs().mean(dim=(2, 3, 4))   # [B, K]
                 close = per_in.min(1).values < args.sup_threshold
@@ -247,11 +297,11 @@ def main() -> None:
             best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
 
     name = f"stage{args.stage}_{args.text_encoder}{args.tag}"
+    torch.save(model.state_dict(), OUT / f"predictor_{name}_last.pt")       # save before evaluating: a crash must not lose the run
+    torch.save(best_state, OUT / f"predictor_{name}.pt")
     res_last = evaluate(model, te, s_te, t_te, args.text_encoder, tok.pad_token_id, "TEST last epoch")
-    torch.save(model.state_dict(), OUT / f"predictor_{name}_last.pt")
     model.load_state_dict(best_state)
     res = evaluate(model, te, s_te, t_te, args.text_encoder, tok.pad_token_id, f"TEST best val retrieval (epoch {best_epoch})")
-    torch.save(model.state_dict(), OUT / f"predictor_{name}.pt")
     make_figure(model, te, tok, args.text_encoder, OUT / f"predictions_{name}.png", sample=args.stage in ("B", "C"))
     print("TEST summary:", {k: round(v, 4) for k, v in res.items()})
 
