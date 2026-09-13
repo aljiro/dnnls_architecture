@@ -8,12 +8,14 @@ Per story and frame (up to MAX_FRAMES = 10):
   ent_pix      [N, 10, M, 3, 30, 62] u8  crops of up to M = 4 character boxes per frame
   ent_slot     [N, 10, M] long           the slot index of each crop, -1 if none
   n_chars      [N] long                  number of distinct characters in the story (capped at S)
+  slot_name_ids [N, S, 6] long           BERT token ids of each slot's name (from the "Name" column), padded
 
 Output: poc/cache/annot_{split}.pt.  Run: python v2/precompute_annotations.py
 """
 
 from __future__ import annotations
 
+import collections
 import re
 import sys
 import time
@@ -22,7 +24,7 @@ from pathlib import Path
 import torch
 from datasets import load_dataset
 from torchvision import transforms
-from transformers import AutoModel, AutoTokenizer
+from transformers import AutoModel, AutoTokenizer, BertTokenizerFast
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -32,6 +34,27 @@ CACHE = ROOT / "poc" / "cache"
 MAX_FRAMES, S, M = 10, 8, 4
 CROP_HW = (30, 62)
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+
+PRONOUNS = {"he", "she", "him", "her", "his", "hers", "they", "them", "their", "it", "himself", "herself", "themselves", "who",
+            "i", "me", "my", "mine", "myself", "we", "us", "our", "you", "your"}
+
+
+def character_names(cot: str, story: str = "") -> dict[str, str]:
+    """Character ID -> name. Prefer the story's grounded mentions (<gdo char2>Mrs. Patel</gdo>): the most
+    frequent mention that is not a pronoun. Fall back to the chain-of-thought table's Name column (a role)."""
+    mentions: dict[str, collections.Counter] = {}
+    for cid, text in re.findall(r"<gdo\s+(char\d+)[^>]*>([^<]+)</gdo>", story or ""):
+        t = re.sub(r"\s+", " ", text).strip().strip(".,;:'\"")
+        if t and t.lower() not in PRONOUNS:
+            mentions.setdefault(cid, collections.Counter())[t] += 1
+    names = {cid: c.most_common(1)[0][0] for cid, c in mentions.items()}
+    for table in re.finditer(r"###\s*Characters(.*?)(?=\n###|\n##|$)", cot or "", re.DOTALL):
+        for row in _markdown_rows(table.group(1)):
+            cid, name = row.get("Character ID", ""), row.get("Name", "")
+            if cid and name and cid not in names:
+                names[cid] = name
+    return names
 
 
 def setting_text(cot: str) -> dict[int, str]:
@@ -59,6 +82,7 @@ def main() -> None:
     st_tok = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
     st = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2").to(DEVICE).eval()
     to_pix = transforms.Compose([transforms.Resize(CROP_HW), transforms.PILToTensor()])
+    bert = BertTokenizerFast.from_pretrained("google-bert/bert-base-uncased")
 
     def embed(texts: list[str]) -> torch.Tensor:
         enc = st_tok(texts, padding=True, truncation=True, max_length=128, return_tensors="pt").to(DEVICE)
@@ -74,6 +98,7 @@ def main() -> None:
         ent_pix = torch.zeros(n, MAX_FRAMES, M, 3, *CROP_HW, dtype=torch.uint8)
         ent_slot = torch.full((n, MAX_FRAMES, M), -1, dtype=torch.long)
         n_chars = torch.zeros(n, dtype=torch.long)
+        slot_name_ids = torch.zeros(n, S, 6, dtype=torch.long)
         t0 = time.time()
         for i in range(n):
             row = ds[i]
@@ -86,6 +111,12 @@ def main() -> None:
                     if det["id"] not in slots and len(slots) < S:
                         slots[det["id"]] = len(slots)
             n_chars[i] = len(slots)
+            names = character_names(cot, row.get("story", ""))
+            for cid, slot in slots.items():
+                name = names.get(cid, "").lower().replace("the ", "")
+                if name:
+                    ids = bert(name, add_special_tokens=False).input_ids[:6]
+                    slot_name_ids[i, slot, :len(ids)] = torch.tensor(ids)
             texts, idx = [], []
             for f in range(min(MAX_FRAMES, len(row["images"]))):
                 if f in settings and settings[f]:
@@ -113,7 +144,7 @@ def main() -> None:
             if i % 500 == 0:
                 print(f"[{split}] {i}/{n}  {time.time() - t0:.0f}s", flush=True)
         torch.save({"set_emb": set_emb, "char_present": char_present, "ent_pix": ent_pix,
-                    "ent_slot": ent_slot, "n_chars": n_chars}, CACHE / f"annot_{split}.pt")
+                    "ent_slot": ent_slot, "n_chars": n_chars, "slot_name_ids": slot_name_ids}, CACHE / f"annot_{split}.pt")
         have = (ent_slot >= 0).sum().item()
         print(f"[{split}] saved: {have} character crops, mean chars/story {n_chars.float().mean():.2f}, "
               f"frames with setting text {(set_emb.abs().sum(-1) > 0).float().mean():.0%}, {time.time() - t0:.0f}s")

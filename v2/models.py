@@ -14,6 +14,12 @@ Stages (ASSESSMENT.md section 9), cumulative:
   "C": B + per-frame setting embedding as input; character crops as entity tokens pooled into each
        frame token; heads predicting which characters appear next (multi-label) and the next
        setting embedding; image decoder conditioned on the predicted setting embedding
+  "D": C + (1) variational residual: prior N(mu_p, s_p) from the sequence state, posterior from the
+       state and the frozen target latent, KL(q || p), samples at test time; (2) mixture / copy-path
+       attention from the similarities between the input frame latents, decoupled from the GRU;
+       (3) per-slot character head on each character's own presence history and entity token;
+       (4) text decoder with cross-attention over the input descriptions, the predicted text
+       embedding and the names of the characters predicted present
 """
 
 from __future__ import annotations
@@ -102,7 +108,7 @@ class TextDecoder(nn.Module):
     COND_PROJ_DIM = 256
 
     def __init__(self, vocab_size: int, cond_dim: int, embedding_dim: int = 128, hidden_dim: int = 384,
-                 word_dropout: float = 0.0, unk_id: int = 100) -> None:
+                 word_dropout: float = 0.0, unk_id: int = 100, memory_dim: int | None = None) -> None:
         super().__init__()
         self.word_dropout, self.unk_id = word_dropout, unk_id
         self.embedding = nn.Embedding(vocab_size, embedding_dim)
@@ -110,11 +116,25 @@ class TextDecoder(nn.Module):
         self.init_h = nn.Linear(self.COND_PROJ_DIM, hidden_dim)
         self.lstm = nn.LSTM(embedding_dim + self.COND_PROJ_DIM, hidden_dim, batch_first=True)
         self.out = nn.Linear(hidden_dim, vocab_size)
+        self.memory_dim = memory_dim
+        if memory_dim:                                   # stage D: Luong-style attention over a memory of vectors
+            self.mem_q = nn.Linear(hidden_dim, hidden_dim)
+            self.mem_k = nn.Linear(memory_dim, hidden_dim)
+            self.mem_v = nn.Linear(memory_dim, hidden_dim)
+            self.mem_out = nn.Sequential(nn.Linear(2 * hidden_dim, hidden_dim), nn.Tanh())
+
+    def _attend(self, out: Tensor, memory: Tensor, mask: Tensor) -> Tensor:
+        """out [B, L, H], memory [B, M, Dm], mask [B, M] -> [B, L, H]"""
+        scores = torch.einsum("blh,bmh->blm", self.mem_q(out), self.mem_k(memory)) / math.sqrt(out.size(-1))
+        scores = scores.masked_fill(~mask[:, None], float("-inf"))
+        att = torch.softmax(scores, -1).nan_to_num(0.0)
+        return self.mem_out(torch.cat((out, torch.einsum("blm,bmh->blh", att, self.mem_v(memory))), -1))
 
     def _step_input(self, ids: Tensor, c: Tensor) -> Tensor:
         return torch.cat((self.embedding(ids), c[:, None].expand(-1, ids.size(1), -1)), -1)
 
-    def forward(self, ids_in: Tensor, cond: Tensor) -> Tensor:  # teacher forcing: [B, L] -> [B, L, vocab]
+    def forward(self, ids_in: Tensor, cond: Tensor, memory: Tensor | None = None,
+                memory_mask: Tensor | None = None) -> Tensor:  # teacher forcing: [B, L] -> [B, L, vocab]
         if self.training and self.word_dropout > 0:
             # replace a share of the teacher-forced tokens with [UNK] so the decoder cannot rely on
             # the previous words alone and has to use the conditioning vector (Bowman et al. 2016)
@@ -123,6 +143,8 @@ class TextDecoder(nn.Module):
         c = self.cond_proj(cond)
         h0 = torch.tanh(self.init_h(c))[None]
         out, _ = self.lstm(self._step_input(ids_in, c), (h0, torch.zeros_like(h0)))
+        if memory is not None:
+            out = self._attend(out, memory, memory_mask)
         return self.out(out)
 
     def load_language_model(self, path) -> None:
@@ -130,11 +152,13 @@ class TextDecoder(nn.Module):
         state = torch.load(path, map_location="cpu")
         keep = {k: v for k, v in state.items() if k.split(".")[0] in ("embedding", "lstm", "out")}
         missing, unexpected = self.load_state_dict(keep, strict=False)
-        assert not unexpected and all(m.split(".")[0] in ("cond_proj", "init_h") for m in missing), (missing, unexpected)
+        assert not unexpected and all(m.split(".")[0] in ("cond_proj", "init_h", "mem_q", "mem_k", "mem_v", "mem_out")
+                                      for m in missing), (missing, unexpected)
 
     @torch.no_grad()
     def generate(self, cond: Tensor, cls_id: int, sep_id: int, max_len: int = 80, sample: bool = False,
-                 top_p: float = 0.9, temperature: float = 0.8, repetition_penalty: float = 1.3) -> list[list[int]]:
+                 top_p: float = 0.9, temperature: float = 0.8, repetition_penalty: float = 1.3,
+                 memory: Tensor | None = None, memory_mask: Tensor | None = None) -> list[list[int]]:
         """Greedy by default; sample=True gives nucleus sampling with a repetition penalty."""
         cp = self.cond_proj(cond)
         h = torch.tanh(self.init_h(cp))[None]
@@ -145,6 +169,8 @@ class TextDecoder(nn.Module):
         seen = torch.zeros(b, self.out.out_features, dtype=torch.bool, device=cond.device)
         for _ in range(max_len):
             o, (h, c) = self.lstm(self._step_input(ids, cp), (h, c))
+            if memory is not None:
+                o = self._attend(o, memory, memory_mask)
             logits = self.out(o[:, -1])
             if sample:
                 logits = torch.where(seen, logits / repetition_penalty, logits) / temperature
@@ -186,6 +212,41 @@ class ContentAttention(nn.Module):
     def forward(self, sequence: Tensor, h: Tensor) -> Tensor:    # -> alpha [B, K]
         scores = torch.einsum("bd,bkd->bk", self.q(h), self.k(sequence)) / math.sqrt(sequence.size(-1))
         return torch.softmax(scores, dim=1)
+
+
+class LatentSimilarityAttention(nn.Module):
+    """Stage D: weights over the inputs from the pattern of similarities between their frame latents
+    (window-centred cosine), plus position. Independent of the GRU state, so it can be supervised
+    toward the closest input without reshaping what the text heads read."""
+
+    def __init__(self, k: int = 4, hidden: int = 32) -> None:
+        super().__init__()
+        self.mlp = nn.Sequential(nn.Linear(2 * k, hidden), nn.GELU(), nn.Linear(hidden, 1))
+        self.register_buffer("eye", torch.eye(k))
+
+    def forward(self, zv: Tensor) -> Tensor:                     # [B, K, D] -> alpha [B, K]
+        zc = F.normalize(zv - zv.mean(1, keepdim=True), dim=-1)
+        sim = zc @ zc.transpose(1, 2)                               # [B, K, K]
+        feats = torch.cat((sim, self.eye.expand(len(zv), -1, -1)), -1)
+        return torch.softmax(self.mlp(feats).squeeze(-1), dim=1)
+
+
+class SlotHead(nn.Module):
+    """Stage D: one logit per character slot from that slot's own evidence: its presence in each of
+    the K inputs, how often, its slot embedding, its pooled entity token, and the sequence state."""
+
+    def __init__(self, hidden_dim: int, slot_dim: int = 64, k: int = 4) -> None:
+        super().__init__()
+        self.mlp = nn.Sequential(nn.Linear(k + 1 + slot_dim + hidden_dim + 2 * hidden_dim, 256), nn.GELU(), nn.Linear(256, 1))
+
+    def forward(self, hc: Tensor, chars_in: Tensor, slot_emb: Tensor, ents: Tensor, ent_slot: Tensor, valid: Tensor) -> Tensor:
+        b, k, n_slots = chars_in.shape
+        hist = chars_in.float().transpose(1, 2)                     # [B, S, K]
+        count = hist.sum(-1, keepdim=True) / k
+        onehot = F.one_hot(ent_slot.clamp(min=0), n_slots).float() * valid[..., None].float()   # [B, K, M, S]
+        pooled = torch.einsum("bkms,bkmh->bsh", onehot, ents) / onehot.sum((1, 2)).clamp(min=1)[..., None]
+        x = torch.cat((hist, count, slot_emb[None].expand(b, -1, -1), pooled, hc[:, None].expand(-1, n_slots, -1)), -1)
+        return self.mlp(x).squeeze(-1)                              # [B, S]
 
 
 class EntityPooling(nn.Module):
@@ -231,8 +292,9 @@ class SequencePredictor(nn.Module):
                  word_dropout: float = 0.0, text_embed_dim: int = 384, stage: str = "0",
                  setting_dim: int = 384, copy_path: bool = False) -> None:
         super().__init__()
-        assert stage in ("0", "A", "B", "C")
+        assert stage in ("0", "A", "B", "C", "D")
         self.stage = stage
+        self.annotated = stage in ("C", "D")
         self.copy_path = PixelCopyPath() if copy_path else None
         self.image_encoder = autoencoder.encoder
         self.image_decoder = autoencoder.decoder
@@ -241,7 +303,7 @@ class SequencePredictor(nn.Module):
         for p in self.target_encoder.parameters():
             p.requires_grad = False
         self.text_encoder = text_encoder                        # None -> inputs are precomputed MiniLM vectors
-        in_dim = latent_dim + text_dim + (setting_dim if stage == "C" else 0)
+        in_dim = latent_dim + text_dim + (setting_dim if self.annotated else 0)
         self.fuse = nn.Sequential(nn.Linear(in_dim, hidden_dim), nn.LayerNorm(hidden_dim), nn.GELU())
         self.temporal_rnn = nn.GRU(hidden_dim, hidden_dim, batch_first=True)
         self.attention = FixedQueryAttention(hidden_dim) if stage == "0" else ContentAttention(hidden_dim)
@@ -252,9 +314,19 @@ class SequencePredictor(nn.Module):
             self.gate = nn.Linear(hidden_dim, 1)
             self.text_latent = nn.Sequential(nn.Linear(2 * hidden_dim, latent_dim), nn.LayerNorm(latent_dim))
         self.text_embed_head = nn.Linear(latent_dim, text_embed_dim)
-        cond_dim = latent_dim + (text_embed_dim if stage in ("B", "C") else 0)
-        self.text_decoder = TextDecoder(vocab_size, cond_dim=cond_dim, word_dropout=word_dropout)
-        if stage == "C":
+        cond_dim = latent_dim + (text_embed_dim if stage in ("B", "C", "D") else 0)
+        self.text_decoder = TextDecoder(vocab_size, cond_dim=cond_dim, word_dropout=word_dropout,
+                                        memory_dim=hidden_dim if stage == "D" else None)
+        if stage == "D":
+            self.prior = nn.Linear(2 * hidden_dim, 2 * latent_dim)
+            self.posterior = nn.Linear(2 * hidden_dim + latent_dim, 2 * latent_dim)
+            self.res_proj = nn.Sequential(nn.Linear(latent_dim, latent_dim), nn.LayerNorm(latent_dim))
+            self.mix_attention = LatentSimilarityAttention()
+            self.slot_head = SlotHead(hidden_dim)
+            self.mem_txt = nn.Linear(text_dim, hidden_dim)
+            self.mem_emb = nn.Linear(text_embed_dim, hidden_dim)
+            self.mem_name = nn.Linear(self.text_decoder.embedding.embedding_dim, hidden_dim)
+        if self.annotated:
             self.slot_embedding = nn.Embedding(N_SLOTS, 64)
             self.entity_proj = nn.Sequential(nn.Linear(latent_dim + 64, hidden_dim), nn.LayerNorm(hidden_dim), nn.GELU())
             self.entity_pool = EntityPooling(hidden_dim, hidden_dim)
@@ -288,24 +360,51 @@ class SequencePredictor(nn.Module):
         slot = self.slot_embedding(ent_slot.clamp(min=0))
         return self.entity_proj(torch.cat((z, slot), -1)), valid
 
+    def variational_residual(self, hc: Tensor, target_latent: Tensor | None, sample: bool) -> tuple[Tensor, dict[str, Tensor]]:
+        """Stage D. Training (target_latent given): sample from the posterior q(z | state, target).
+        Evaluation: the prior mean (deterministic) or a prior sample (sample=True)."""
+        mu_p, lv_p = self.prior(hc).chunk(2, -1)
+        lv_p = lv_p.clamp(-8, 4)
+        stats = {"mu_p": mu_p, "logvar_p": lv_p}
+        if target_latent is not None:
+            mu_q, lv_q = self.posterior(torch.cat((hc, target_latent), -1)).chunk(2, -1)
+            lv_q = lv_q.clamp(-8, 4)
+            z = mu_q + torch.exp(0.5 * lv_q) * torch.randn_like(mu_q)
+            stats.update({"mu_q": mu_q, "logvar_q": lv_q})
+        elif sample:
+            z = mu_p + torch.exp(0.5 * lv_p) * torch.randn_like(mu_p)
+        else:
+            z = mu_p
+        return self.res_proj(z), stats
+
+    def name_memory(self, slot_name_ids: Tensor) -> Tensor:
+        """[B, S, 6] token ids -> [B, S, H] mean of the decoder's token embeddings, projected."""
+        emb = self.text_decoder.embedding(slot_name_ids)            # [B, S, 6, E]
+        m = (slot_name_ids > 0).float()[..., None]
+        return self.mem_name((emb * m).sum(2) / m.sum(2).clamp(min=1))
+
     def forward(self, frames: Tensor, text: Tensor, target_ids_in: Tensor,
-                set_emb: Tensor | None = None, ent_pix: Tensor | None = None,
-                ent_slot: Tensor | None = None) -> dict[str, Tensor]:
+                set_emb: Tensor | None = None, ent_pix: Tensor | None = None, ent_slot: Tensor | None = None,
+                chars_in: Tensor | None = None, slot_name_ids: Tensor | None = None,
+                target_latent: Tensor | None = None, names_present: Tensor | None = None,
+                sample: bool = False) -> dict[str, Tensor]:
         b, k = frames.shape[:2]
         zv = self.image_encoder(frames.flatten(0, 1)).view(b, k, -1)
-        parts = [zv, self.encode_text(text)]
-        if self.stage == "C":
+        zt = self.encode_text(text)
+        parts = [zv, zt]
+        if self.annotated:
             parts.append(set_emb)
         x = self.fuse(torch.cat(parts, -1))
-        if self.stage == "C":
+        if self.annotated:
             ents, valid = self.encode_entities(ent_pix, ent_slot)
             x = self.entity_pool(x, ents, valid)
         seq, h = self.temporal_rnn(x)
         h = h[-1]
-        alpha = self.attention(seq, h)                             # [B, K]
-        ctx = torch.einsum("bk,bkd->bd", alpha, seq)
+        alpha_ctx = self.attention(seq, h)                         # [B, K], from the sequence state
+        ctx = torch.einsum("bk,bkd->bd", alpha_ctx, seq)
         hc = torch.cat((h, ctx), -1)
-        out: dict[str, Tensor] = {"alpha": alpha}
+        alpha = self.mix_attention(zv) if self.stage == "D" else alpha_ctx    # weights for the mixture / copy path
+        out: dict[str, Tensor] = {"alpha": alpha, "alpha_ctx": alpha_ctx}
         if self.stage == "0":
             z = self.projection(hc)
             z_txt = z
@@ -313,18 +412,34 @@ class SequencePredictor(nn.Module):
         else:
             mix = torch.einsum("bk,bkd->bd", alpha, zv)             # a point in the frame-latent space
             g = torch.sigmoid(self.gate(h)).squeeze(-1)
-            z = F.layer_norm(g[:, None] * mix + (1 - g[:, None]) * self.residual(hc), (zv.size(-1),))
+            if self.stage == "D":
+                residual, stats = self.variational_residual(hc, target_latent, sample)
+                out.update(stats)
+            else:
+                residual = self.residual(hc)
+            z = F.layer_norm(g[:, None] * mix + (1 - g[:, None]) * residual, (zv.size(-1),))
             z_txt = self.text_latent(hc)
             out["gate"] = g
         e_txt = self.text_embed_head(z_txt)
-        cond = torch.cat((z_txt, e_txt), -1) if self.stage in ("B", "C") else z_txt
+        cond = torch.cat((z_txt, e_txt), -1) if self.stage in ("B", "C", "D") else z_txt
         z_img = z
-        if self.stage == "C":
-            out["char_logits"] = self.char_head(hc)
+        memory = memory_mask = None
+        if self.annotated:
+            if self.stage == "D":
+                out["char_logits"] = self.slot_head(hc, chars_in, self.slot_embedding.weight, ents, ent_slot, valid)
+            else:
+                out["char_logits"] = self.char_head(hc)
             out["setting"] = self.setting_head(hc)
             z_img = z + self.setting_to_latent(out["setting"])
+        if self.stage == "D":
+            present = names_present if names_present is not None else torch.sigmoid(out["char_logits"]) > 0.3
+            present = present & (slot_name_ids.sum(-1) > 0)
+            memory = torch.cat((self.mem_txt(zt), self.mem_emb(e_txt)[:, None], self.name_memory(slot_name_ids)), 1)
+            memory_mask = torch.cat((torch.ones(b, k + 1, dtype=torch.bool, device=frames.device), present), 1)
+            out["memory"], out["memory_mask"] = memory, memory_mask
         generated = self.image_decoder(z_img)
-        out.update({"image": generated, "generated": generated, "logits": self.text_decoder(target_ids_in, cond),
+        out.update({"image": generated, "generated": generated,
+                    "logits": self.text_decoder(target_ids_in, cond, memory, memory_mask),
                     "z": z, "z_txt": z_txt, "e_txt": e_txt, "cond": cond})
         if self.copy_path is not None:
             out["image"], out["copy_gate"] = self.copy_path(generated, frames, alpha)
@@ -333,6 +448,13 @@ class SequencePredictor(nn.Module):
     @torch.no_grad()
     def generate_text(self, cond: Tensor, cls_id: int, sep_id: int, **kw) -> list[list[int]]:
         return self.text_decoder.generate(cond, cls_id, sep_id, **kw)
+
+
+def kl_divergence(stats: dict[str, Tensor]) -> Tensor:
+    """KL(q || p) between the diagonal Gaussians of the posterior and the conditional prior, per window."""
+    mu_p, lv_p, mu_q, lv_q = stats["mu_p"], stats["logvar_p"], stats["mu_q"], stats["logvar_q"]
+    kl = 0.5 * (lv_p - lv_q + (torch.exp(lv_q) + (mu_q - mu_p) ** 2) / torch.exp(lv_p) - 1)
+    return kl.sum(-1).mean()
 
 
 def centred_cosine_loss(pred: Tensor, target: Tensor) -> Tensor:

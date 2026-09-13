@@ -93,5 +93,6 @@ def gather(d: dict[str, torch.Tensor], s: torch.Tensor, t: torch.Tensor, k: int 
             "target_chars": d["char_present"][s, t],                      # [B, S] bool
             "target_set": d["set_emb"][s, t],                             # [B, 384]
             "n_chars": d["n_chars"][s],                                   # [B]
+            "slot_name_ids": d["slot_name_ids"][s],                       # [B, S, 6]
         })
     return out
