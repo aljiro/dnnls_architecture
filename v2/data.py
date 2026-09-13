@@ -113,6 +113,7 @@ def gather(d: dict[str, torch.Tensor], s: torch.Tensor, t: torch.Tensor, k: int 
         "clip": d["clip"][s[:, None], pos],                               # [B, K, 512]
         "target_txt": d["txt"][s, t],                                     # [B, 384]
         "target_ids": d["ids"][s, t],                                     # [B, T]
+        "target_clip": d["clip"][s, t],                                   # [B, 512]
     }
     if "set_emb" in d:                                                    # stage C fields
         out.update({
