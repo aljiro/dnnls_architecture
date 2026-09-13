@@ -371,7 +371,11 @@ stage scales what has capacity: 76 % more windows from the frames the caches had
 GroundCap (the single-frame dataset StoryReasoning was built from) for pretraining the
 autoencoder and the language model, frozen CLIP embeddings of frames and crops as extra inputs,
 and a twice-wider autoencoder. Resolution was left out on purpose (four times the compute for
-gains confined to reconstruction and near-copy windows). Results in ASSESSMENT.md section 11.
+gains confined to reconstruction and near-copy windows). On the same 5,254 test windows the
+scaled model gains ten points of text retrieval (41.5 -> 51.6 %), a lower text cross-entropy
+(2.65 -> 2.40), two points of character F1 and a better reconstruction (0.042 -> 0.036), while
+every image-prediction number stays within 0.003: the parts that were data-limited moved, the
+part that is objective-limited did not.
 
 ## 8. Where it stands
 
