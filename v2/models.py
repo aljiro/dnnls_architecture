@@ -2,28 +2,31 @@
 
   ConvEncoder / ConvDecoder / VisualAutoencoder   from-scratch CNN, latent 256, LayerNorm (no ReLU) on the latent
   TextEncoderLSTM                                 optional from-scratch text encoder (default is frozen MiniLM)
-  TextDecoder                                     LSTM conditioned on the fused vector at every step
-  Attention                                       the notebook's learned-query attention, unchanged
-  SequencePredictor                               encoders -> fuse -> GRU -> attention -> latent -> decoders
+  TextDecoder                                     LSTM conditioned at every step; word dropout; greedy or nucleus sampling
+  SequencePredictor                               encoders -> fuse -> GRU -> attention -> latents -> decoders
 
-What changed and why (numbers refer to ASSESSMENT.md):
-  - no context head: the two heads shared one tensor and trained the output to be the mean image
-  - latent 16 -> 256, ReLU -> LayerNorm: the 16-d ReLU bottleneck was constant across inputs from epoch 1
-  - the predictor returns its latent so training can add a latent-space target (cosine to the
-    encoder's latent of the true next frame), which is informative where pixel L1 is not
-  - the text decoder sees the fused vector at every step, not only through h0/c0
-  - second pass, after the probe showed the decoder ignored its condition (CE 3.061 with the true
-    latent vs 3.070 with a shuffled one): word dropout on the teacher-forced tokens, and a head that
-    predicts the MiniLM embedding of the next description so the latent must carry the text
+Stages (ASSESSMENT.md section 9), cumulative:
+  "0": the pass-2 model of section 7 (fixed-query attention, one shared latent z)
+  "A": constant component removed from the residual (BatchNorm without affine); content-dependent
+       attention (query from the final GRU state); image latent = gate * mixture of input frame
+       latents + (1 - gate) * residual; separate text latent
+  "B": A + text decoder conditioned on (text latent, predicted text embedding)
+  "C": B + per-frame setting embedding as input; character crops as entity tokens pooled into each
+       frame token; heads predicting which characters appear next (multi-label) and the next
+       setting embedding; image decoder conditioned on the predicted setting embedding
 """
 
 from __future__ import annotations
+
+import copy
+import math
 
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 
 IMAGE_HW = (60, 125)
+N_SLOTS = 8            # character slots per story (see v2/precompute_annotations.py)
 
 
 class ConvEncoder(nn.Module):
@@ -115,14 +118,28 @@ class TextDecoder(nn.Module):
         return self.out(out)
 
     @torch.no_grad()
-    def generate(self, cond: Tensor, cls_id: int, sep_id: int, max_len: int = 80) -> list[list[int]]:
+    def generate(self, cond: Tensor, cls_id: int, sep_id: int, max_len: int = 80, sample: bool = False,
+                 top_p: float = 0.9, temperature: float = 0.8, repetition_penalty: float = 1.3) -> list[list[int]]:
+        """Greedy by default; sample=True gives nucleus sampling with a repetition penalty."""
         h = torch.tanh(self.init_h(cond))[None]
         c = torch.zeros_like(h)
-        ids = torch.full((cond.size(0), 1), cls_id, dtype=torch.long, device=cond.device)
-        out_ids, done = [], torch.zeros(cond.size(0), dtype=torch.bool, device=cond.device)
+        b = cond.size(0)
+        ids = torch.full((b, 1), cls_id, dtype=torch.long, device=cond.device)
+        out_ids, done = [], torch.zeros(b, dtype=torch.bool, device=cond.device)
+        seen = torch.zeros(b, self.out.out_features, dtype=torch.bool, device=cond.device)
         for _ in range(max_len):
             o, (h, c) = self.lstm(self._step_input(ids, cond), (h, c))
-            ids = self.out(o[:, -1]).argmax(-1, keepdim=True)
+            logits = self.out(o[:, -1])
+            if sample:
+                logits = torch.where(seen, logits / repetition_penalty, logits) / temperature
+                probs = torch.softmax(logits, -1)
+                sp, si = probs.sort(-1, descending=True)
+                keep = (sp.cumsum(-1) - sp) < top_p
+                sp = sp * keep
+                ids = si.gather(1, torch.multinomial(sp / sp.sum(-1, keepdim=True), 1))
+            else:
+                ids = logits.argmax(-1, keepdim=True)
+            seen.scatter_(1, ids, True)
             out_ids.append(ids)
             done |= ids.squeeze(1) == sep_id
             if done.all():
@@ -131,52 +148,162 @@ class TextDecoder(nn.Module):
         return [s[: s.index(sep_id)] if sep_id in s else s for s in seq]
 
 
-class Attention(nn.Module):
-    """Learned-query attention over the GRU outputs (as in the notebook)."""
+class FixedQueryAttention(nn.Module):
+    """The notebook's attention: one learned query, the same importance profile for any input."""
 
     def __init__(self, hidden_dim: int) -> None:
         super().__init__()
         self.score = nn.Linear(hidden_dim, 1)
 
-    def forward(self, sequence: Tensor) -> Tensor:
-        weights = torch.softmax(self.score(sequence).squeeze(-1), dim=1)
-        return torch.bmm(weights.unsqueeze(1), sequence).squeeze(1)
+    def forward(self, sequence: Tensor, h: Tensor) -> Tensor:    # -> alpha [B, K]
+        return torch.softmax(self.score(sequence).squeeze(-1), dim=1)
+
+
+class ContentAttention(nn.Module):
+    """Stage A: the query comes from the final GRU state, so the weights depend on the sequence."""
+
+    def __init__(self, hidden_dim: int) -> None:
+        super().__init__()
+        self.q = nn.Linear(hidden_dim, hidden_dim)
+        self.k = nn.Linear(hidden_dim, hidden_dim)
+
+    def forward(self, sequence: Tensor, h: Tensor) -> Tensor:    # -> alpha [B, K]
+        scores = torch.einsum("bd,bkd->bk", self.q(h), self.k(sequence)) / math.sqrt(sequence.size(-1))
+        return torch.softmax(scores, dim=1)
+
+
+class EntityPooling(nn.Module):
+    """Stage C: each frame token attends over the entity tokens of its frame and adds the result."""
+
+    def __init__(self, hidden_dim: int, ent_dim: int) -> None:
+        super().__init__()
+        self.k = nn.Linear(ent_dim, hidden_dim)
+        self.v = nn.Linear(ent_dim, hidden_dim)
+        self.norm = nn.LayerNorm(hidden_dim)
+
+    def forward(self, x: Tensor, ents: Tensor, valid: Tensor) -> Tensor:
+        # x [B, K, H], ents [B, K, M, E], valid [B, K, M]
+        scores = torch.einsum("bkh,bkmh->bkm", x, self.k(ents)) / math.sqrt(x.size(-1))
+        scores = scores.masked_fill(~valid, float("-inf"))
+        alpha = torch.softmax(scores, -1).nan_to_num(0.0)        # frames without entities -> zero
+        return self.norm(x + torch.einsum("bkm,bkmh->bkh", alpha, self.v(ents)))
 
 
 class SequencePredictor(nn.Module):
     def __init__(self, autoencoder: VisualAutoencoder, text_dim: int, vocab_size: int,
                  text_encoder: nn.Module | None = None, latent_dim: int = 256, hidden_dim: int = 256,
-                 word_dropout: float = 0.0, text_embed_dim: int = 384) -> None:
+                 word_dropout: float = 0.0, text_embed_dim: int = 384, stage: str = "0",
+                 setting_dim: int = 384) -> None:
         super().__init__()
+        assert stage in ("0", "A", "B", "C")
+        self.stage = stage
         self.image_encoder = autoencoder.encoder
         self.image_decoder = autoencoder.decoder
+        # frozen copy of the pretrained encoder: the latent target cannot drift while the online encoder is fine-tuned
+        self.target_encoder = copy.deepcopy(autoencoder.encoder).eval()
+        for p in self.target_encoder.parameters():
+            p.requires_grad = False
         self.text_encoder = text_encoder                        # None -> inputs are precomputed MiniLM vectors
-        self.fuse = nn.Sequential(nn.Linear(latent_dim + text_dim, hidden_dim), nn.LayerNorm(hidden_dim), nn.GELU())
+        in_dim = latent_dim + text_dim + (setting_dim if stage == "C" else 0)
+        self.fuse = nn.Sequential(nn.Linear(in_dim, hidden_dim), nn.LayerNorm(hidden_dim), nn.GELU())
         self.temporal_rnn = nn.GRU(hidden_dim, hidden_dim, batch_first=True)
-        self.attention = Attention(hidden_dim)
-        self.projection = nn.Sequential(nn.Linear(2 * hidden_dim, latent_dim), nn.LayerNorm(latent_dim))
-        self.text_decoder = TextDecoder(vocab_size, cond_dim=latent_dim, word_dropout=word_dropout)
-        self.text_embed_head = nn.Linear(latent_dim, text_embed_dim)   # predicts the MiniLM vector of the next description
+        self.attention = FixedQueryAttention(hidden_dim) if stage == "0" else ContentAttention(hidden_dim)
+        if stage == "0":
+            self.projection = nn.Sequential(nn.Linear(2 * hidden_dim, latent_dim), nn.LayerNorm(latent_dim))
+        else:
+            self.residual = nn.Sequential(nn.Linear(2 * hidden_dim, latent_dim), nn.BatchNorm1d(latent_dim, affine=False))
+            self.gate = nn.Linear(hidden_dim, 1)
+            self.text_latent = nn.Sequential(nn.Linear(2 * hidden_dim, latent_dim), nn.LayerNorm(latent_dim))
+        self.text_embed_head = nn.Linear(latent_dim, text_embed_dim)
+        cond_dim = latent_dim + (text_embed_dim if stage in ("B", "C") else 0)
+        self.text_decoder = TextDecoder(vocab_size, cond_dim=cond_dim, word_dropout=word_dropout)
+        if stage == "C":
+            self.slot_embedding = nn.Embedding(N_SLOTS, 64)
+            self.entity_proj = nn.Sequential(nn.Linear(latent_dim + 64, hidden_dim), nn.LayerNorm(hidden_dim), nn.GELU())
+            self.entity_pool = EntityPooling(hidden_dim, hidden_dim)
+            self.char_head = nn.Linear(2 * hidden_dim, N_SLOTS)
+            self.setting_head = nn.Linear(2 * hidden_dim, setting_dim)
+            self.setting_to_latent = nn.Linear(setting_dim, latent_dim)
 
+    def train(self, mode: bool = True):
+        super().train(mode)
+        self.target_encoder.eval()                              # never in train mode (GroupNorm is fine, but be explicit)
+        return self
+
+    @torch.no_grad()
+    def target_latent(self, frames: Tensor) -> Tensor:
+        return self.target_encoder(frames)
+
+    # ---- pieces ----
     def encode_text(self, text: Tensor) -> Tensor:
-        """text is [B, K, 384] MiniLM vectors, or [B, K, T] token ids when an LSTM encoder is set."""
         if self.text_encoder is None:
             return text
         b, k = text.shape[:2]
         return self.text_encoder(text.flatten(0, 1)).view(b, k, -1)
 
-    def predict_latent(self, frames: Tensor, text: Tensor) -> Tensor:
+    def encode_entities(self, ent_pix: Tensor, ent_slot: Tensor) -> tuple[Tensor, Tensor]:
+        """ent_pix [B, K, M, 3, h, w] uint8 crops, ent_slot [B, K, M] -> tokens [B, K, M, H], valid [B, K, M]"""
+        b, k, m = ent_slot.shape
+        valid = ent_slot >= 0
+        crops = ent_pix.flatten(0, 2).float() / 255
+        crops = F.interpolate(crops, size=IMAGE_HW, mode="bilinear", align_corners=False)
+        z = self.image_encoder(crops).view(b, k, m, -1)
+        slot = self.slot_embedding(ent_slot.clamp(min=0))
+        return self.entity_proj(torch.cat((z, slot), -1)), valid
+
+    def forward(self, frames: Tensor, text: Tensor, target_ids_in: Tensor,
+                set_emb: Tensor | None = None, ent_pix: Tensor | None = None,
+                ent_slot: Tensor | None = None) -> dict[str, Tensor]:
         b, k = frames.shape[:2]
         zv = self.image_encoder(frames.flatten(0, 1)).view(b, k, -1)
-        zt = self.encode_text(text)
-        seq, h = self.temporal_rnn(self.fuse(torch.cat((zv, zt), -1)))
-        return self.projection(torch.cat((h[-1], self.attention(seq)), -1))
+        parts = [zv, self.encode_text(text)]
+        if self.stage == "C":
+            parts.append(set_emb)
+        x = self.fuse(torch.cat(parts, -1))
+        if self.stage == "C":
+            ents, valid = self.encode_entities(ent_pix, ent_slot)
+            x = self.entity_pool(x, ents, valid)
+        seq, h = self.temporal_rnn(x)
+        h = h[-1]
+        alpha = self.attention(seq, h)                             # [B, K]
+        ctx = torch.einsum("bk,bkd->bd", alpha, seq)
+        hc = torch.cat((h, ctx), -1)
+        out: dict[str, Tensor] = {"alpha": alpha}
+        if self.stage == "0":
+            z = self.projection(hc)
+            z_txt = z
+            out["gate"] = torch.zeros(b, device=frames.device)
+        else:
+            mix = torch.einsum("bk,bkd->bd", alpha, zv)             # a point in the frame-latent space
+            g = torch.sigmoid(self.gate(h)).squeeze(-1)
+            z = F.layer_norm(g[:, None] * mix + (1 - g[:, None]) * self.residual(hc), (zv.size(-1),))
+            z_txt = self.text_latent(hc)
+            out["gate"] = g
+        e_txt = self.text_embed_head(z_txt)
+        cond = torch.cat((z_txt, e_txt), -1) if self.stage in ("B", "C") else z_txt
+        z_img = z
+        if self.stage == "C":
+            out["char_logits"] = self.char_head(hc)
+            out["setting"] = self.setting_head(hc)
+            z_img = z + self.setting_to_latent(out["setting"])
+        out.update({"image": self.image_decoder(z_img), "logits": self.text_decoder(target_ids_in, cond),
+                    "z": z, "z_txt": z_txt, "e_txt": e_txt, "cond": cond})
+        return out
 
-    def forward(self, frames: Tensor, text: Tensor, target_ids_in: Tensor) -> tuple[Tensor, Tensor, Tensor, Tensor]:
-        z = self.predict_latent(frames, text)
-        return self.image_decoder(z), self.text_decoder(target_ids_in, z), z, self.text_embed_head(z)
+    @torch.no_grad()
+    def generate_text(self, cond: Tensor, cls_id: int, sep_id: int, **kw) -> list[list[int]]:
+        return self.text_decoder.generate(cond, cls_id, sep_id, **kw)
 
 
-def latent_loss(z_pred: Tensor, z_true: Tensor) -> Tensor:
-    """1 - cosine similarity to the encoder's latent of the true next frame (target detached)."""
-    return 1 - F.cosine_similarity(z_pred, z_true.detach(), dim=-1).mean()
+def centred_cosine_loss(pred: Tensor, target: Tensor) -> Tensor:
+    """1 - cosine similarity after subtracting the batch mean of the (detached) targets.
+
+    Encoder latents share a large mean vector (raw pairwise cosine 0.31; MiniLM vectors 0.38), so a
+    raw cosine loss is nearly blind to the informative part and can be satisfied by shrinking all
+    latents toward the mean. Centring removes that solution."""
+    target = target.detach()
+    mu = target.mean(0, keepdim=True)
+    return 1 - F.cosine_similarity(pred - mu, target - mu, dim=-1).mean()
+
+
+latent_loss = centred_cosine_loss

@@ -455,3 +455,71 @@ the entity ID.
   0.04 level on near-copy windows.
 - Plausibility losses for the image (perceptual, adversarial, diffusion decoder) or the
   retrieval formulation of section 4: the only way past the L1 ceiling on cut windows.
+
+## 10. Stages A, B, C: results (2026-09-13)
+
+`v2/train.py --stage {0,A,B,C}`; MiniLM text encoder, same story split, 15 epochs each
+(8, 8 and 12 minutes on the laptop GPU). Logs `v2/out/train_stage*.log`, figures
+`v2/out/predictions_stage*_minilm.png` (B and C use nucleus sampling for the text).
+
+Before these runs a measurement problem had to be fixed: the encoder's latents share a large
+mean vector (raw pairwise cosine 0.31 between frames; 0.38 for MiniLM vectors), so a raw
+cosine loss is nearly blind to the informative part and can be satisfied by shrinking every
+latent toward the mean, which is exactly what the fine-tuned encoder did in section 7 (latent
+loss 0.005 within two epochs, "latent cosine 0.98"). Fix, applied to all stages: the latent
+target comes from a frozen copy of the pretrained encoder, and cosine losses and retrieval
+metrics are computed after subtracting the batch mean of the targets (`centred_cosine_loss`).
+
+| test split, 2,974 windows | stage 0 (sec. 7 pass 2) | A | B | C |
+|---|---|---|---|---|
+| image L1 (floors 0.151 median / 0.170 copy) | 0.132 | 0.135 | 0.134 | 0.133 |
+| image L1 on near-copy windows (15 %) | 0.065 | 0.077 | 0.077 | 0.075 |
+| prediction spread (target 0.204) | 0.101 | 0.124 | 0.125 | 0.123 |
+| latent cosine between windows, centred | (0.98 raw) | 0.033 | 0.033 | 0.028 |
+| image-latent retrieval, top-10 | 0.9 % | 6.1 % | 6.8 % | 7.6 % |
+| text-embedding retrieval, top-10 | 37.5 %* | 49.2 % | 48.0 % | 43.5 % |
+| text CE, true / shuffled condition | 3.28 / 3.38 | 3.29 / 3.48 | 3.28 / 3.48 | 3.30 / 3.48 |
+| attention argmax = closest input (chance 25 %) | n/a | 29 % | 29 % | 30 % |
+| gate on near-copy / cut windows | n/a | 0.85 / 0.78 | 0.86 / 0.79 | 0.92 / 0.88 |
+| next-frame character F1 (best threshold) | n/a | n/a | n/a | 0.41 |
+
+\* raw-cosine retrieval; the other columns are centred.
+
+**Stage A is the step that mattered.** The constant component is gone (centred cosine 0.03),
+both retrievals rise in the same run (the heads no longer compete), the text decoder's
+dependence on its condition doubles (gap 0.19 vs 0.10 nats), and the prediction spread rises
+from 0.10 to 0.12. The one regression is on the near-copy windows, 0.065 -> 0.077, and it
+tells you what did not happen: the attention learned the *position prior* (mean weights
+[0.12, 0.26, 0.36, 0.26], frame 3 first, the A-B-A-B rhythm) but not the *per-window*
+selection (its argmax hits the closest input 29 % of the time, chance 25 %). With near-uniform
+weights the mixture is an average of four frames, which decodes to a blend, and the gate stays
+high everywhere (0.85 / 0.78) because that blend still beats the residual under L1. The
+mechanism is wired but untrained: nothing in the loss says which frame to pick, and the pixel
+gradient from 15 % of windows is too weak to teach it.
+
+**Stage B changed nothing measurable.** Conditioning on the predicted text embedding leaves
+the CE gap at 0.20. Nucleus sampling replaces the corpus-mode sentence with varied, mostly
+readable descriptions that carry names and settings ("maria sat near the door", "sarah
+asked", "the reader"), with the grammar slips of a small LSTM sampled at temperature 0.8.
+
+**Stage C: the structured heads learned the prior, not the pattern.** The next-frame
+character head reaches F1 0.41 at its best threshold (0.29 at 0.5: the head is
+under-confident because only 1.6 of 6.9 slots are positive per frame), equal to the "every
+character seen so far" baseline (0.41) and below "present in at least 2 of the 4 inputs"
+(0.47) and "same as frame 3" (0.44). Two facts from the annotations are worth keeping: frame
+3's characters predict frame 5's better than frame 4's (0.44 vs 0.38), the editing rhythm
+again; and the per-character history is the signal, which the current head, fed only the
+pooled sequence state, cannot exploit slot by slot. The setting conditioning has no visible
+effect on L1, and the extra losses cost text retrieval (49 % -> 43 %).
+
+**Next fixes, in order:**
+1. Teach the attention: the closest input is known at training time (per-input pixel
+   distance to the target), so add a cross-entropy from `alpha` to it. This is the shot
+   pattern as an explicit target; check argmax accuracy well above 29 % and near-copy L1
+   back under 0.065.
+2. Per-slot character head: for each character slot, a small classifier on that slot's
+   presence pattern over the four inputs plus its entity token, instead of one head on the
+   pooled state. The 0.47 baseline is the floor it must beat. Calibrate the threshold on
+   validation.
+3. Drop the setting conditioning of the image decoder (no effect) and keep the setting
+   embedding as an input only.

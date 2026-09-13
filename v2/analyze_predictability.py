@@ -32,19 +32,20 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 @torch.no_grad()
 def main() -> None:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--stage", choices=["0", "A", "B", "C"], default="A")
     ap.add_argument("--text-encoder", choices=["minilm", "lstm"], default="minilm")
     ap.add_argument("--tag", default="")
     ap.add_argument("--same-shot-threshold", type=float, default=0.06)
     args = ap.parse_args()
     tok = tokenizer()
-    te = load_split("test", DEVICE)
+    te = load_split("test", DEVICE, annotations=args.stage == "C")
     s, t = windows(te)
     ae = VisualAutoencoder().to(DEVICE)
     ae.load_state_dict(torch.load(OUT / "visual_ae.pt", map_location=DEVICE)); ae.eval()
     text_encoder = TextEncoderLSTM(tok.vocab_size, tok.pad_token_id) if args.text_encoder == "lstm" else None
     model = SequencePredictor(VisualAutoencoder(), 384 if text_encoder is None else text_encoder.out_dim,
-                              tok.vocab_size, text_encoder).to(DEVICE)
-    model.load_state_dict(torch.load(OUT / f"predictor_{args.text_encoder}{args.tag}.pt", map_location=DEVICE)); model.eval()
+                              tok.vocab_size, text_encoder, stage=args.stage).to(DEVICE)
+    model.load_state_dict(torch.load(OUT / f"predictor_stage{args.stage}_{args.text_encoder}{args.tag}.pt", map_location=DEVICE)); model.eval()
 
     target = te["pix"][s, t].float() / 255
     median = target.median(0).values
@@ -54,7 +55,8 @@ def main() -> None:
     for b in range(0, len(s), 64):
         batch = gather(te, s[b:b + 64], t[b:b + 64])
         text = batch["txt"] if args.text_encoder == "minilm" else batch["ids"]
-        img, *_ = model(batch["frames"], text, batch["target_ids"][:, :-1])
+        extra = {k: batch[k] for k in ("set_emb", "ent_pix", "ent_slot") if model.stage == "C"}
+        img = model(batch["frames"], text, batch["target_ids"][:, :-1], **extra)["image"]
         copy.append(per(batch["frames"][:, -1], batch["target"]))
         mdl.append(per(img, batch["target"]))
         recon.append(per(ae(batch["target"]), batch["target"]))

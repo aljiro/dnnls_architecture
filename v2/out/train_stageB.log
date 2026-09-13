@@ -1,0 +1,36 @@
+stage B  windows: train 13625  val 3393  test 2974  device cuda  text encoder minilm
+loaded pretrained autoencoder from /home/aljiro/dev/dnnls_architecture/v2/out/visual_ae.pt
+trainable params: 24,014,046
+epoch  1/15 (28s)  train pixel 0.1314  latent 0.6402  text 7.2094  emb 0.9726
+[val e1] img_L1=0.1289  img_L1_near_copy=0.0765  floor_median=0.1519  floor_copy=0.1665  pred_spread=0.1090  latent_cos=0.0230  alpha_on_best_input=0.2596  gate_near_copy=0.9095  gate_cut=0.9076  latent_R@10=0.0545  text_R@10=0.0141  text_CE=5.72  text_CE_shuffled=5.72
+epoch  2/15 (60s)  train pixel 0.1296  latent 0.6070  text 5.3250  emb 0.7238
+[val e2] img_L1=0.1307  img_L1_near_copy=0.0788  floor_median=0.1519  floor_copy=0.1665  pred_spread=0.1114  latent_cos=0.0126  alpha_on_best_input=0.2655  gate_near_copy=0.9364  gate_cut=0.9295  latent_R@10=0.0445  text_R@10=0.1848  text_CE=4.67  text_CE_shuffled=4.70
+epoch  3/15 (92s)  train pixel 0.1291  latent 0.5997  text 4.6793  emb 0.6341
+[val e3] img_L1=0.1294  img_L1_near_copy=0.0763  floor_median=0.1519  floor_copy=0.1665  pred_spread=0.0896  latent_cos=0.0432  alpha_on_best_input=0.2681  gate_near_copy=0.9447  gate_cut=0.9251  latent_R@10=0.0477  text_R@10=0.2956  text_CE=4.16  text_CE_shuffled=4.20
+epoch  4/15 (124s)  train pixel 0.1283  latent 0.5919  text 4.3301  emb 0.5979
+[val e4] img_L1=0.1290  img_L1_near_copy=0.0777  floor_median=0.1519  floor_copy=0.1665  pred_spread=0.0984  latent_cos=0.0197  alpha_on_best_input=0.2715  gate_near_copy=0.9262  gate_cut=0.9032  latent_R@10=0.0563  text_R@10=0.3451  text_CE=3.87  text_CE_shuffled=3.95
+epoch  5/15 (156s)  train pixel 0.1274  latent 0.5831  text 4.1086  emb 0.5726
+[val e5] img_L1=0.1290  img_L1_near_copy=0.0760  floor_median=0.1519  floor_copy=0.1665  pred_spread=0.1029  latent_cos=0.0141  alpha_on_best_input=0.2714  gate_near_copy=0.9326  gate_cut=0.9159  latent_R@10=0.0492  text_R@10=0.3849  text_CE=3.68  text_CE_shuffled=3.77
+epoch  6/15 (188s)  train pixel 0.1263  latent 0.5728  text 3.9473  emb 0.5516
+[val e6] img_L1=0.1290  img_L1_near_copy=0.0751  floor_median=0.1519  floor_copy=0.1665  pred_spread=0.1175  latent_cos=0.0393  alpha_on_best_input=0.2803  gate_near_copy=0.9259  gate_cut=0.8976  latent_R@10=0.0578  text_R@10=0.4400  text_CE=3.54  text_CE_shuffled=3.67
+epoch  7/15 (220s)  train pixel 0.1249  latent 0.5613  text 3.8252  emb 0.5337
+[val e7] img_L1=0.1288  img_L1_near_copy=0.0764  floor_median=0.1519  floor_copy=0.1665  pred_spread=0.1046  latent_cos=0.0374  alpha_on_best_input=0.2811  gate_near_copy=0.9090  gate_cut=0.8821  latent_R@10=0.0554  text_R@10=0.4497  text_CE=3.45  text_CE_shuffled=3.59
+epoch  8/15 (253s)  train pixel 0.1234  latent 0.5482  text 3.7349  emb 0.5175
+[val e8] img_L1=0.1293  img_L1_near_copy=0.0753  floor_median=0.1519  floor_copy=0.1665  pred_spread=0.1133  latent_cos=0.0186  alpha_on_best_input=0.2700  gate_near_copy=0.9075  gate_cut=0.8778  latent_R@10=0.0616  text_R@10=0.4660  text_CE=3.38  text_CE_shuffled=3.54
+epoch  9/15 (285s)  train pixel 0.1216  latent 0.5345  text 3.6639  emb 0.5021
+[val e9] img_L1=0.1298  img_L1_near_copy=0.0751  floor_median=0.1519  floor_copy=0.1665  pred_spread=0.1171  latent_cos=0.0144  alpha_on_best_input=0.2759  gate_near_copy=0.8871  gate_cut=0.8446  latent_R@10=0.0663  text_R@10=0.4604  text_CE=3.33  text_CE_shuffled=3.50
+epoch 10/15 (317s)  train pixel 0.1199  latent 0.5228  text 3.6080  emb 0.4888
+[val e10] img_L1=0.1304  img_L1_near_copy=0.0764  floor_median=0.1519  floor_copy=0.1665  pred_spread=0.1119  latent_cos=0.0142  alpha_on_best_input=0.2729  gate_near_copy=0.8747  gate_cut=0.8192  latent_R@10=0.0690  text_R@10=0.4657  text_CE=3.30  text_CE_shuffled=3.49
+epoch 11/15 (349s)  train pixel 0.1181  latent 0.5093  text 3.5689  emb 0.4765
+[val e11] img_L1=0.1321  img_L1_near_copy=0.0774  floor_median=0.1519  floor_copy=0.1665  pred_spread=0.1232  latent_cos=0.0114  alpha_on_best_input=0.2779  gate_near_copy=0.8684  gate_cut=0.8136  latent_R@10=0.0754  text_R@10=0.4665  text_CE=3.28  text_CE_shuffled=3.47
+epoch 12/15 (381s)  train pixel 0.1164  latent 0.4988  text 3.5371  emb 0.4666
+[val e12] img_L1=0.1318  img_L1_near_copy=0.0756  floor_median=0.1519  floor_copy=0.1665  pred_spread=0.1211  latent_cos=0.0157  alpha_on_best_input=0.2834  gate_near_copy=0.8690  gate_cut=0.8066  latent_R@10=0.0740  text_R@10=0.4695  text_CE=3.27  text_CE_shuffled=3.46
+epoch 13/15 (413s)  train pixel 0.1149  latent 0.4907  text 3.5185  emb 0.4599
+[val e13] img_L1=0.1325  img_L1_near_copy=0.0765  floor_median=0.1519  floor_copy=0.1665  pred_spread=0.1230  latent_cos=0.0105  alpha_on_best_input=0.2783  gate_near_copy=0.8600  gate_cut=0.7952  latent_R@10=0.0704  text_R@10=0.4704  text_CE=3.26  text_CE_shuffled=3.46
+epoch 14/15 (445s)  train pixel 0.1141  latent 0.4864  text 3.5078  emb 0.4549
+[val e14] img_L1=0.1328  img_L1_near_copy=0.0765  floor_median=0.1519  floor_copy=0.1665  pred_spread=0.1243  latent_cos=0.0125  alpha_on_best_input=0.2800  gate_near_copy=0.8631  gate_cut=0.7972  latent_R@10=0.0719  text_R@10=0.4692  text_CE=3.26  text_CE_shuffled=3.45
+epoch 15/15 (477s)  train pixel 0.1136  latent 0.4837  text 3.5014  emb 0.4523
+[val e15] img_L1=0.1329  img_L1_near_copy=0.0765  floor_median=0.1519  floor_copy=0.1665  pred_spread=0.1252  latent_cos=0.0119  alpha_on_best_input=0.2798  gate_near_copy=0.8619  gate_cut=0.7955  latent_R@10=0.0725  text_R@10=0.4713  text_CE=3.26  text_CE_shuffled=3.46
+[TEST] img_L1=0.1344  img_L1_near_copy=0.0767  floor_median=0.1514  floor_copy=0.1697  pred_spread=0.1249  latent_cos=0.0326  alpha_on_best_input=0.2806  gate_near_copy=0.8591  gate_cut=0.7942  latent_R@10=0.0679  text_R@10=0.4795  text_CE=3.28  text_CE_shuffled=3.48
+figure: /home/aljiro/dev/dnnls_architecture/v2/out/predictions_stageB_minilm.png
+TEST summary: {'img_L1': 0.1344, 'img_L1_near_copy': 0.0767, 'floor_median': 0.1514, 'floor_copy': 0.1697, 'pred_spread': 0.1249, 'latent_cos': 0.0326, 'alpha_on_best_input': 0.2806, 'gate_near_copy': 0.8591, 'gate_cut': 0.7942, 'latent_R@10': 0.0679, 'text_R@10': 0.4795, 'text_CE': 3.2813, 'text_CE_shuffled': 3.4788}

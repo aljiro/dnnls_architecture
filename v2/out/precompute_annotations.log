@@ -1,0 +1,14 @@
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|██████████| 103/103 [00:00<00:00, 8800.79it/s]
+[train] 0/3552  0s
+[train] 500/3552  7s
+[train] 1000/3552  15s
+[train] 1500/3552  22s
+[train] 2000/3552  30s
+[train] 2500/3552  38s
+[train] 3000/3552  47s
+[train] 3500/3552  55s
+[train] saved: 50816 character crops, mean chars/story 6.65, frames with setting text 88%, 56s
+[test] 0/626  0s
+[test] 500/626  8s
+[test] saved: 9067 character crops, mean chars/story 6.70, frames with setting text 88%, 10s
