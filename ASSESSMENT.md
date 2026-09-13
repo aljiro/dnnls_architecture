@@ -556,3 +556,25 @@ the shared sequence state, and the remaining gap on near-copy windows is the pix
 For the L1 version of the architecture, 0.130 with the selection working is close to what
 this data allows without a pixel copy path; the 0.112 ceiling assumes perfect selection and
 perfect copying.
+
+### 10c. Stage C for 30 epochs
+
+Same configuration as stage C, 30 epochs instead of 15 (`v2/out/train_stageC_e30.log`).
+
+| test split | C, 15 epochs | C, 30 epochs (last) | C, 30 epochs (best val image L1 = epoch 1) |
+|---|---|---|---|
+| image L1 | 0.133 | 0.140 | 0.130 |
+| prediction spread | 0.123 | 0.138 | 0.100 |
+| image-latent retrieval top-10 | 7.6 % | 6.3 % | 4.3 % |
+| text retrieval top-10 | 43.5 % | 39.6 % | 1.2 % |
+| text CE, true / shuffled | 3.30 / 3.48 | 3.00 / 3.29 | 5.91 / 5.91 |
+| character F1 (threshold 0.5) | 0.29 | 0.29 | 0.00 |
+
+Validation image L1 is lowest at epoch 1 (0.1288) and rises monotonically to 0.1396 at epoch
+30: the pixel head overfits from the first epoch. Retrieval peaks around epochs 12-18 and
+then declines; only the text decoder keeps improving (its condition gap widens to 0.29 nats),
+at the cost of text retrieval. Longer training therefore helps nothing but the language model,
+and the checkpoint with the best image L1 is a model whose other heads have not trained yet,
+so "best validation image L1" is the wrong selection rule for a multi-head model: select on
+retrieval, or stop each head separately. Under L1 with 13.6k windows, 12-15 epochs is the
+right budget.
