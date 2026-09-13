@@ -216,6 +216,7 @@ def main() -> None:
                     help="L1 of decoder(encoder(target)) during training, so the autoencoder keeps its reconstruction skill")
     ap.add_argument("--kl-weight", type=float, default=1e-3, help="stage D: weight of KL(q || p), linearly warmed up over --kl-warmup epochs")
     ap.add_argument("--kl-warmup", type=float, default=3.0)
+    ap.add_argument("--free-bits", type=float, default=0.0, help="stage D: nats per latent dimension exempt from the KL penalty")
     ap.add_argument("--n-samples", type=int, default=5, help="stage D: prior samples per window at evaluation")
     ap.add_argument("--perceptual-weight", type=float, default=0.0,
                     help="VGG feature-space distance to the target added to the image loss (v2/perceptual.py)")
@@ -294,7 +295,7 @@ def main() -> None:
                 losses["perceptual"] = args.perceptual_weight * PERCEPTUAL(o["image"], batch["target"])
             if args.stage == "D":
                 warm = min(1.0, (epoch + b / (len(s_tr) // args.batch_size)) / max(args.kl_warmup, 1e-6))
-                losses["kl"] = args.kl_weight * warm * kl_divergence(o)
+                losses["kl"] = args.kl_weight * warm * kl_divergence(o, args.free_bits)
             if args.recon_weight > 0:
                 losses["recon"] = args.recon_weight * F.l1_loss(model.image_decoder(model.image_encoder(batch["target"])), batch["target"])
             if args.attn_weight > 0 or args.gate_weight > 0:
