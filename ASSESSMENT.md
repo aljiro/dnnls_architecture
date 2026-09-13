@@ -391,3 +391,67 @@ decoder and the image decoder mostly see the constant. Next fix: remove the cons
 component before the decoders (batch normalisation without affine on `z`, or running-mean
 subtraction), or condition the text decoder on the predicted text embedding, which the cosine
 loss makes discriminative.
+
+## 9. Roadmap for v2 (agreed 2026-09-13)
+
+Ordered by expected impact per line of code. Each step has a metric that shows whether it
+worked, independent of pixel L1. The pixel copy path (section 8) is deferred: if step 2
+works, it should be unnecessary.
+
+### A. Fix the latent (small edits to `v2/models.py`)
+
+1. **Remove the constant component of `z`.** Batch normalisation without affine (or a running
+   mean subtracted) on the vector that feeds the decoders. Check: pairwise cosine between
+   predicted latents on a test batch drops well below the current 0.98; prediction spread
+   rises from 0.10; generated openings stop repeating.
+2. **Content-dependent attention and latent mixture.** Query from the final GRU state, keys
+   from the GRU outputs; `z = g * sum_i alpha_i zv_i + (1 - g) * delta`, with the mixture over
+   the image-encoder latents `zv_i`, the residual `delta` from `(h, context)`, and a gate `g`
+   from `h`. Check: on windows where an input is a near-copy of the target, image L1 falls
+   from 0.065 toward 0.04; `alpha` concentrates on frame 3 in alternating A-B-A-B windows;
+   `g` is high on continuing shots and low on cuts.
+3. **Separate heads.** Own projections from `(h, context)` for the text-embedding head and
+   the image latent, so they stop competing for one vector (section 7, frozen run). Check:
+   image-latent top-10 and text top-10 both stay high in the same run (today it is one or
+   the other: 7.5 % / n/a, 0.9 % / 37 %, 3.4 % / 16 %).
+
+### B. Fix the text head (`v2/models.py`, `v2/visualize.py`)
+
+4. **Judge and decode properly.** Report the true-vs-shuffled cross-entropy gap and text
+   retrieval as the text metrics; generate with nucleus sampling and a repetition penalty
+   instead of greedy search, which returns the corpus mode ("the tension reached a ...",
+   34 % of descriptions contain "the tension").
+5. **Condition on the predicted text embedding** (the cosine-trained head) in addition to
+   `z`; later, cross-attention over the four input descriptions instead of a single vector.
+
+### C. Use the annotations (new inputs and targets; parser exists in `data.py`)
+
+The chain-of-thought gives, per frame: characters (persistent ID, name, description,
+emotions, actions, narrative function, bounding box), objects (same fields), and setting
+(location, lighting, time of day, mood). The story text is grounded: each mention carries
+the entity ID.
+
+6. **Setting fields as conditioning for the image decoder** (location type, lighting, time,
+   mood, as small embeddings). Cheap, and aimed at the only pixel properties that are
+   predictable across a cut: brightness and tint. Check: image L1 on cut windows below the
+   current 0.137.
+7. **Entity crops as inputs.** Encode each character box with the pretrained image encoder
+   and give the fusion a set of entity tokens per frame alongside the frame latent
+   (attention over entities, not only over frames). Check: `alpha` on entities, image-latent
+   and text retrieval up.
+8. **Structured next-frame target: which characters appear next, and which setting.** A
+   multi-label head over the story's character IDs plus a setting/mood head, trained with
+   cross-entropy. This is the most predictable aspect of the next frame and gives the GRU and
+   attention a genuine sequence task with an honest metric (precision/recall of the
+   characters in frame 5, vs "same as frame 4" and "all seen so far" baselines). Largest
+   impact, largest build; depends on 7.
+9. **Grounded names in the text.** Condition the text decoder on the names of the predicted
+   next-frame characters (from 8), so descriptions say "Mrs. Patel" instead of "john and
+   john". Check: name accuracy against the target description's grounded mentions.
+
+### Deferred
+
+- Pixel copy path over the four inputs (section 8): add only if step 2 does not reach the
+  0.04 level on near-copy windows.
+- Plausibility losses for the image (perceptual, adversarial, diffusion decoder) or the
+  retrieval formulation of section 4: the only way past the L1 ceiling on cut windows.
