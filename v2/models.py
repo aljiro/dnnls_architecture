@@ -450,10 +450,15 @@ class SequencePredictor(nn.Module):
         return self.text_decoder.generate(cond, cls_id, sep_id, **kw)
 
 
-def kl_divergence(stats: dict[str, Tensor]) -> Tensor:
-    """KL(q || p) between the diagonal Gaussians of the posterior and the conditional prior, per window."""
+def kl_divergence(stats: dict[str, Tensor], free_bits: float = 0.0) -> Tensor:
+    """KL(q || p) between the diagonal Gaussians of the posterior and the conditional prior, per window.
+
+    free_bits > 0: each latent dimension may carry up to that many nats without penalty (Kingma et al.
+    2016), so the posterior keeps a fixed information budget instead of being squeezed toward the prior."""
     mu_p, lv_p, mu_q, lv_q = stats["mu_p"], stats["logvar_p"], stats["mu_q"], stats["logvar_q"]
     kl = 0.5 * (lv_p - lv_q + (torch.exp(lv_q) + (mu_q - mu_p) ** 2) / torch.exp(lv_p) - 1)
+    if free_bits > 0:
+        kl = kl.clamp(min=free_bits)
     return kl.sum(-1).mean()
 
 
