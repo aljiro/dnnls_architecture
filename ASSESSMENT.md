@@ -9,9 +9,11 @@ The model produces a blob because the training objective asks for one, not becau
 data is too disjoint and not because of a noise pattern in the frames. Three independent
 problems stack up, and none of them is a matter of scale:
 
-1. **The blob is built into the loss.** The decoder returns the same tensor twice, so the
-   "context" loss (MSE to the batch-mean image, weight 1) trains the only image output to be
-   the mean image. On top of that, L1 in pixel space against a next frame that comes from a
+1. **The blob is built into the loss.** The context head was added later as an attempt to
+   absorb the mean image, and it is not part of the intended architecture, but as wired the
+   decoder returns the same tensor twice, so the "context" loss (MSE to the batch-mean image,
+   weight 1) trains the only image output to be the mean image. Independently of that, L1 in
+   pixel space against a next frame that comes from a
    different shot is minimised by the per-pixel median image. On the real frames a constant
    median image scores L1 = 0.155, while copying the previous frame scores 0.174, so the loss
    itself prefers the blob over a plausible frame. A bigger model trained this way only
