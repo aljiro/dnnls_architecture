@@ -287,6 +287,19 @@ latents rather than from the shared sequence state.
 
 ---
 
+## 7b. Pretrained text decoder, discriminative learning rates, retrieval-based selection
+
+Three changes with one motive, protect what was pretrained and select what has trained:
+the text decoder is pretrained as an unconditional language model on all 31k descriptions
+(`v2/pretrain_text.py`, perplexity 17.9) and loaded before conditional training; the
+pretrained image encoder and decoder train at 0.1x the learning rate and the decoder's language
+layers at 0.3x; checkpoints are selected on validation retrieval rather than image L1 (the
+image-L1 rule had picked epoch 1, a model whose other heads were untrained). Result: text
+cross-entropy 2.75 instead of 3.30 and readable sampled descriptions, text retrieval 46 % (C)
+and 52 % (A), image L1 0.131 / 0.132. The new reconstruction monitor shows the autoencoder
+still drifts to 0.080 from its pretrained 0.040 even at the low rate, which points to the
+next change: a reconstruction term during sequence training.
+
 ## 8. Where it stands
 
 | test split, 2,974 windows | notebook | v2 pass 1 | v2 pass 2 | A | B | C |

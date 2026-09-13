@@ -578,3 +578,35 @@ and the checkpoint with the best image L1 is a model whose other heads have not 
 so "best validation image L1" is the wrong selection rule for a multi-head model: select on
 retrieval, or stop each head separately. Under L1 with 13.6k windows, 12-15 epochs is the
 right budget.
+
+### 10d. Steps 1-3: discriminative learning rates, retrieval-based selection, pretrained text decoder
+
+`v2/pretrain_text.py` trains the text decoder as an unconditional language model on all 31k
+cached descriptions (8 epochs, 6 minutes; test perplexity 17.9). `v2/train.py` then loads its
+embedding, LSTM and output layers, trains them at 0.3x the learning rate, the pretrained image
+encoder and decoder at 0.1x, selects the checkpoint on validation retrieval, and logs the
+reconstruction L1 of the fine-tuned autoencoder (`recon_L1`, pretrained reference 0.040).
+Tag `_s123`, 15 epochs.
+
+| test split | C | C + steps 1-3 | A | A + steps 1-3 |
+|---|---|---|---|---|
+| image L1 | 0.133 | **0.131** | 0.135 | **0.132** |
+| L1 on near-copy windows | 0.075 | 0.073 | 0.077 | 0.076 |
+| image-latent retrieval top-10 | 7.6 % | 7.8 % | 6.1 % | 6.9 % |
+| text retrieval top-10 | 43.5 % | **45.7 %** | 49.2 % | **52.0 %** |
+| text CE, true / shuffled | 3.30 / 3.48 | **2.75** / 2.81 | 3.29 / 3.48 | **2.75** / 2.81 |
+| character F1 (0.5) | 0.29 | 0.28 | n/a | n/a |
+| reconstruction L1 of the fine-tuned autoencoder | n/a | 0.080 | n/a | 0.081 |
+
+Every metric improved or held, and the pretrained decoder is the clearest gain: text
+cross-entropy 2.75 (perplexity 15.6) instead of 3.30, and the sampled descriptions read as
+sentences. Two things to read carefully. The decoder's dependence on its condition shrank
+(gap 0.06 nats vs 0.18): the pretrained language model is a stronger prior, so the same
+conditioning signal moves it less, while the *latent* carries more (text retrieval up). And the
+reconstruction monitor shows that a 10x lower learning rate does not stop the autoencoder from
+drifting: reconstruction of the target through the fine-tuned encoder and decoder is 0.077
+after the first epoch and 0.080 at the end, twice the pretrained 0.040. The decoder is being
+trained to draw smooth predictions and forgets how to draw sharp reconstructions. The fix is
+the one from section 5, item 3: keep a reconstruction loss term on the target frame during
+sequence training (or freeze the decoder), so the component keeps the skill it was pretrained
+for. That is the next single change.
