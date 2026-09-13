@@ -38,6 +38,7 @@ from v2.models import SequencePredictor, TextEncoderLSTM, VisualAutoencoder, kl_
 from v2.visualize import make_figure  # noqa: E402
 
 PERCEPTUAL = None      # set in main() when --perceptual-weight > 0
+CLIP_EMBED = None      # set in main() when --clip-loss-weight > 0
 N_SAMPLES = 5
 
 OUT = ROOT / "v2" / "out"
@@ -87,7 +88,7 @@ def evaluate(model: SequencePredictor, d: dict, s: torch.Tensor, t: torch.Tensor
     n = len(s)
     per = lambda a, b: (a - b).abs().mean(dim=(1, 2, 3))
     W: dict[str, list] = {k: [] for k in ("l1", "l1_blob", "l1_copy", "l1_recon", "copy_best", "best_in", "alpha", "gate",
-                                          "l1_best_of_k", "l1_sample_mean", "diversity", "l1_posterior", "kl",
+                                          "l1_best_of_k", "l1_sample_mean", "diversity", "l1_posterior", "kl", "clip_sim",
                                           "copy_gate", "perc_model", "perc_blob", "perc_copy", "perc_recon",
                                           "char_logits", "target_chars", "chars_in", "n_chars")}
     Z: dict[str, list] = {k: [] for k in ("z", "z_true", "e_pred", "e_true")}
@@ -114,6 +115,9 @@ def evaluate(model: SequencePredictor, d: dict, s: torch.Tensor, t: torch.Tensor
         W["alpha"].append(o["alpha"]); W["gate"].append(o["gate"])
         if "copy_gate" in o:
             W["copy_gate"].append(o["copy_gate"].mean(dim=(1, 2, 3)))
+        if CLIP_EMBED is not None:
+            W["clip_sim"].append(F.cosine_similarity(CLIP_EMBED(img) - batch["target_clip"].mean(0, keepdim=True),
+                                                     batch["target_clip"] - batch["target_clip"].mean(0, keepdim=True), dim=-1))
         if PERCEPTUAL is not None:
             W["perc_model"].append(PERCEPTUAL(img, target, reduce=False))
             W["perc_blob"].append(PERCEPTUAL(median.expand_as(target), target, reduce=False))
@@ -161,6 +165,8 @@ def evaluate(model: SequencePredictor, d: dict, s: torch.Tensor, t: torch.Tensor
         "text_CE": ce / n_tok,
         "text_CE_shuffled": ce_shuf / n_tok,
     }
+    if "clip_sim" in a:
+        res["clip_sim"] = a["clip_sim"].mean().item()
     if "perc_model" in a:
         for k in ("perc_model", "perc_blob", "perc_copy", "perc_recon"):
             res[k] = a[k].mean().item()
@@ -221,6 +227,9 @@ def main() -> None:
     ap.add_argument("--kl-warmup", type=float, default=3.0)
     ap.add_argument("--free-bits", type=float, default=0.0, help="stage D: nats per latent dimension exempt from the KL penalty")
     ap.add_argument("--n-samples", type=int, default=5, help="stage D: prior samples per window at evaluation")
+    ap.add_argument("--clip-loss-weight", type=float, default=0.0,
+                    help="centred cosine between the CLIP embedding of the decoded image and the cached CLIP embedding of frame 5 "
+                         "(differentiable through a frozen CLIP); rewards semantically right content where L1 rewards the blob")
     ap.add_argument("--perceptual-weight", type=float, default=0.0,
                     help="VGG feature-space distance to the target added to the image loss (v2/perceptual.py)")
     ap.add_argument("--tag", default="")
@@ -229,8 +238,11 @@ def main() -> None:
     tok = tokenizer()
     annot = args.stage in ("C", "D")
 
-    global PERCEPTUAL, N_SAMPLES
+    global PERCEPTUAL, N_SAMPLES, CLIP_EMBED
     N_SAMPLES = args.n_samples
+    if args.clip_loss_weight > 0:
+        from v2.semantic_metrics import ClipEmbed
+        CLIP_EMBED = ClipEmbed().to(DEVICE)
     if args.perceptual_weight > 0:
         from v2.perceptual import VGGPerceptual
         PERCEPTUAL = VGGPerceptual().to(DEVICE)
@@ -296,6 +308,8 @@ def main() -> None:
             }
             if PERCEPTUAL is not None:
                 losses["perceptual"] = args.perceptual_weight * PERCEPTUAL(o["image"], batch["target"])
+            if CLIP_EMBED is not None:
+                losses["clip"] = args.clip_loss_weight * latent_loss(CLIP_EMBED(o["image"]), batch["target_clip"])
             if args.stage == "D":
                 warm = min(1.0, (epoch + b / (len(s_tr) // args.batch_size)) / max(args.kl_warmup, 1e-6))
                 losses["kl"] = args.kl_weight * warm * kl_divergence(o, args.free_bits)
