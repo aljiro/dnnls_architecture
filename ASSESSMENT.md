@@ -835,3 +835,38 @@ property pixel L1 and the VGG distance lacked. That makes CLIP similarity a trai
 that rewards plausibility. It is added as `--clip-loss-weight` (differentiable through a frozen
 CLIP on the decoded image, targeting the cached CLIP embedding of frame 5, centred like the
 other cosine terms); results in 11c.
+
+### 11c. The CLIP-similarity loss
+
+Scaled stage D plus `--clip-loss-weight 1.0` (`_scale_clip`), same 5,254 test windows.
+
+| | scaled D | scaled D + CLIP loss |
+|---|---|---|
+| CLIP similarity of the prediction to the target (centred) | 0.056 | **0.249** |
+| CLIP Frechet, prediction / samples | 0.33 / 0.34 | **0.25 / 0.23** |
+| sharpness / target, prediction / samples | 0.02 / 0.03 | **0.34 / 0.33** |
+| pixel L1, prior mean | 0.132 | 0.134 |
+| L1 on near-copy windows | 0.074 | 0.079 |
+| best of 5 samples / average sample | 0.124 / 0.148 | 0.126 / 0.145 |
+| CLIP similarity of the samples | 0.00 | 0.01 |
+| text retrieval / text CE | 51.6 % / 2.40 | 48.8 % / 2.40 |
+| character F1 at 0.3 | 0.46 | 0.45 |
+
+The loss does what the metric predicted. The prediction's semantic similarity to the target
+rises 4.5x, above the autoencoder's own reconstruction (0.14), its sharpness rises 17x, the
+distribution of predictions and of samples moves much closer to the targets' (Frechet 0.65 for
+the blob, 0.25 here, 0.00 for real frames), and the price in pixel L1 is 0.002. The figure
+(`v2/out/predictions_stageD_minilm_scale_clip.png`) shows the change directly: the street
+window gets buildings and a figure, the bedroom warm shapes, the forest dark blue-green with
+light streaks, all textured rather than smeared. Copy-last at 0.37 shows how much room is left.
+
+Two honest caveats. The samples still carry no target-specific semantics (0.01): the
+variational path draws plausible frames, and now sharper ones, but the prior is not tied to
+which frame. And there is a visible artefact: a small repeated motif (a red-blue mark near the
+bottom centre) appears in every prediction and sample. That is the decoder exploiting the
+frozen CLIP, the same mechanism as adversarial textures in CLIP-guided generation. The
+standard remedies are the ones from that literature, in order: random differentiable
+augmentations (crops, flips, small colour jitter) before the CLIP encoder so the loss cannot be
+satisfied by a fixed pattern; a lower weight (0.3-0.5); and, if needed, a discriminator. With
+the artefact removed, this is the image head the project should present: the first one whose
+outputs a semantic metric, a realism metric and the eye all rank above the blob.

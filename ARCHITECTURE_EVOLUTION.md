@@ -387,8 +387,10 @@ that every drawn image was at 2 % of the target's sharpness, and that the visibl
 wide autoencoder's reconstruction (0.08 -> 0.15). They also showed the one property every
 earlier distance lacked: copy-last scores 0.37 against 0.00 for the blob, so CLIP similarity
 rewards a related frame over the average. Used as a training term through a frozen CLIP, it
-triples the prediction's CLIP similarity within two epochs at unchanged pixel L1; the full
-result is in ASSESSMENT.md 11c.
+raises the prediction's CLIP similarity 4.5x (0.056 -> 0.249) and its sharpness 17x at a cost
+of 0.002 pixel L1, and turns the predictions into textured, scene-like images; it also leaves a
+repeated CLIP-exploiting motif in every output, to be removed with augmentations before the
+encoder (ASSESSMENT.md 11c).
 
 ## 8. Where it stands
 
