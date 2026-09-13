@@ -1,0 +1,15 @@
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+descriptions: train 96549  test 7758  device cuda
+[W913 21:40:51.083678505 CUDACachingAllocator.cpp:3934] memory allocation failed with OOM on device 0 while trying to allocate 3095396352 bytes (free: 1339228160, total: 8231387136).
+epoch 1/8 (136s)  train CE 4.636  test perplexity 30.3
+epoch 2/8 (276s)  train CE 2.633  test perplexity 18.3
+epoch 3/8 (417s)  train CE 2.307  test perplexity 15.3
+epoch 4/8 (558s)  train CE 2.156  test perplexity 14.0
+epoch 5/8 (698s)  train CE 2.068  test perplexity 13.4
+epoch 6/8 (839s)  train CE 2.014  test perplexity 13.1
+epoch 7/8 (980s)  train CE 1.983  test perplexity 13.0
+epoch 8/8 (1120s)  train CE 1.970  test perplexity 13.0
+sample: the tension in the room was palpable as john and sarah stood near a wall. emily, alex, david, lisa, ben, tom, rachel, paul, mike, olivia, emily,
+sample: the scene shifted to a more intimate setting, where tom and lisa stood near the wall. she felt a sense of relief wash over her as he realized that this was just the beginning of a dangerous situation
+sample: in this scene, a man with glasses is captured in a close - up shot. he appears to be indoors, possibly in an indoor setting or corridor. the room features multiple walls that are painted part
+saved /home/aljiro/dev/dnnls_architecture/v2/out/text_lm.pt

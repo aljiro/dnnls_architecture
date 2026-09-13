@@ -770,3 +770,36 @@ Run: `python poc/precompute.py`, `python v2/precompute_annotations.py`,
 `v2/pretrain_text.py --extra groundcap`, and `v2/train.py --stage D --copy-path --recon-weight 1
 --attn-weight 1 --kl-weight 1e-2 --clip-input --entity-features clip --ae-width 2 --ae-weights
 v2/out/visual_ae_w2.pt`.
+
+### 11a. Results
+
+Component pretraining on both corpora: the width-2 autoencoder reaches validation L1 0.032
+on held-out story frames (0.040 for the width-1 model on StoryReasoning alone; floor 0.152);
+the language model reaches test perplexity 13.0 (17.9 before). Stage D at scale trains on
+24,001 windows (13,625 before) and is evaluated on the new test set of 5,254 windows, so the
+previous reference (KL 1e-2, trained on the 10-frame caches) was re-evaluated on the same
+5,254 windows for a fair comparison.
+
+| test split, 5,254 windows | reference D (KL 1e-2) | scaled D |
+|---|---|---|
+| image L1, prior mean (floors 0.151 / 0.167) | 0.131 | 0.132 |
+| image L1, best of 5 samples | 0.123 | 0.124 |
+| image L1, average sample | 0.145 | 0.148 |
+| L1 on near-copy windows | 0.074 | 0.074 |
+| sample diversity / KL | 0.093 / 10.9 | 0.106 / 10.2 |
+| reconstruction L1 of the fine-tuned autoencoder | 0.042 | **0.036** |
+| text retrieval top-10 | 41.5 % | **51.6 %** |
+| text CE, true / shuffled condition | 2.65 / 2.91 | **2.40 / 2.74** |
+| character F1 at 0.3 (baselines 0.39 / 0.43 / 0.48) | 0.44 | **0.46** |
+| attention picks the closest input, near-copy | 41 % | 43 % |
+
+Scaling moved exactly the parts that were data-limited and left the part that is
+objective-limited where it was. Text retrieval gains ten points and the decoder's
+cross-entropy drops from 2.65 to 2.40 with a wider condition gap (0.34 nats): more windows,
+a better language model and CLIP's semantics all feed the text side. The character head gains
+two points and now sits 0.014 below the strongest baseline. The reconstruction reference
+improves by 15 % and the fine-tuned autoencoder keeps it. The image prediction does not move:
+prior mean, best-of-5, average sample and near-copy L1 are all within 0.003 of the reference.
+A stronger encoder, 76 % more windows and a better decoder change nothing about the fact that
+the next shot's pixels are not in the inputs. That is the cleanest evidence in the project
+that the image side is bounded by the objective, and the reason resolution was not pursued.

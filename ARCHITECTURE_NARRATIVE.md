@@ -270,10 +270,16 @@ gains confined to reconstruction and near-copy windows).
 **Measure.** The same table as Level 8, plus the reconstruction reference of the wider
 autoencoder and text perplexity of the language model trained on both corpora.
 
+**Reached** (same 5,254 test windows, scaled vs reference): text retrieval 51.6 % vs 41.5 %,
+text cross-entropy 2.40 vs 2.65, character F1 0.46 vs 0.44, reconstruction 0.036 vs 0.042;
+image prediction unchanged (prior mean 0.132 vs 0.131, best of 5 samples 0.124 vs 0.123).
+
 **Lesson.** Every head's validation curve was flat by epoch 12 on 13.6k windows; scaling the
 GRU or the attention would fit sooner and generalise no better. What moves is data and the
 strength of the frozen components, the pattern seen from the first proof of concept (CLIP
-retrieval 40 % vs 9 % for the from-scratch encoder).
+retrieval 40 % vs 9 % for the from-scratch encoder). And what does not move, even with a
+stronger encoder, more windows and a better decoder, is the image prediction: the cleanest
+demonstration that it is bounded by the objective, not the model.
 
 **Exercises.** Ablate each of the three scaling steps. Compare the wide and narrow autoencoder
 on reconstruction and on the near-copy windows.

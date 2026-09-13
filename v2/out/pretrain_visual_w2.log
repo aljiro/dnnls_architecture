@@ -1,0 +1,18 @@
+tokenising train descriptions once ...
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+tokenising test descriptions once ...
+train frames 96549  val frames 7758  constant-median floor L1 = 0.1516  device cuda  width 2
+autoencoder params: 12,718,659
+epoch  1/12  train L1 0.0789  val L1 0.0497 (median floor 0.1516)  latent spread 0.804  dead 0%  35s
+epoch  2/12  train L1 0.0465  val L1 0.0421 (median floor 0.1516)  latent spread 0.794  dead 0%  70s
+epoch  3/12  train L1 0.0408  val L1 0.0383 (median floor 0.1516)  latent spread 0.797  dead 0%  106s
+epoch  4/12  train L1 0.0379  val L1 0.0361 (median floor 0.1516)  latent spread 0.791  dead 0%  141s
+epoch  5/12  train L1 0.0356  val L1 0.0349 (median floor 0.1516)  latent spread 0.785  dead 0%  177s
+epoch  6/12  train L1 0.0342  val L1 0.0337 (median floor 0.1516)  latent spread 0.785  dead 0%  212s
+epoch  7/12  train L1 0.0334  val L1 0.0330 (median floor 0.1516)  latent spread 0.783  dead 0%  248s
+epoch  8/12  train L1 0.0327  val L1 0.0326 (median floor 0.1516)  latent spread 0.789  dead 0%  283s
+epoch  9/12  train L1 0.0322  val L1 0.0323 (median floor 0.1516)  latent spread 0.793  dead 0%  319s
+epoch 10/12  train L1 0.0318  val L1 0.0320 (median floor 0.1516)  latent spread 0.796  dead 0%  355s
+epoch 11/12  train L1 0.0315  val L1 0.0319 (median floor 0.1516)  latent spread 0.798  dead 0%  390s
+epoch 12/12  train L1 0.0314  val L1 0.0319 (median floor 0.1516)  latent spread 0.798  dead 0%  426s
+saved /home/aljiro/dev/dnnls_architecture/v2/out/visual_ae_w2.pt and /home/aljiro/dev/dnnls_architecture/v2/out/reconstructions.png
