@@ -315,9 +315,12 @@ looked better was the wide autoencoder's reconstruction. The variational samples
 but not the target's. Everything drawn was at 2 % of the target's sharpness. And the decisive
 row: copy-last scores 0.37 against 0.00 for the blob, so under CLIP similarity a different but
 related frame beats the average by a wide margin, the property no pixel or VGG distance had.
-That makes it a loss that rewards plausibility: with it, the prediction's CLIP similarity
-reaches 0.17 within two epochs (three times the previous best, above the wide reconstruction)
-at unchanged pixel L1. Final numbers in ASSESSMENT.md section 11c.
+That makes it a loss that rewards plausibility. Trained with it (15 epochs): CLIP similarity
+of the prediction 0.249 (from 0.056), sharpness 0.34 of the target's (from 0.02), Frechet
+distance 0.25 (from 0.33), pixel L1 0.134 (from 0.132). The predictions become textured,
+scene-like images. Two caveats to teach with it: the samples still carry no target semantics,
+and a repeated motif appears in every output, the decoder exploiting the frozen CLIP, which
+random differentiable augmentations before the encoder are the standard cure for.
 
 **Exercises.** Compute the three measures for the floors and show which metric ranks copy-last
 above the blob. Add the CLIP loss and plot CLIP similarity against pixel L1 over epochs. Judge
