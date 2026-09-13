@@ -1,0 +1,6 @@
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights:   0%|          | 0/398 [00:00<?, ?it/s]Loading weights: 100%|██████████| 398/398 [00:00<00:00, 50178.34it/s]
+stage D  windows: train 24001  val 5990  test 5254  device cuda  text encoder minilm
+loaded pretrained autoencoder from v2/out/visual_ae_w2.pt
+loaded pretrained language model into the text decoder from /home/aljiro/dev/dnnls_architecture/v2/out/text_lm.pt
+trainable params: 33,497,097  (image enc/dec at 0.1x, text LM layers at 0.3x)

@@ -803,3 +803,35 @@ prior mean, best-of-5, average sample and near-copy L1 are all within 0.003 of t
 A stronger encoder, 76 % more windows and a better decoder change nothing about the fact that
 the next shot's pixels are not in the inputs. That is the cleanest evidence in the project
 that the image side is bounded by the objective, and the reason resolution was not pursued.
+
+### 11b. What the eye sees that L1 does not: semantic metrics
+
+Pixel L1 cannot separate "right layout, blurred" from "right tint, no structure", and the VGG
+distance of section 10e turned out to be almost as alignment-bound. `v2/semantic_metrics.py`
+adds three measures with the usual floors: CLIP similarity between the decoded image and the
+target (centred by the mean test embedding), the Frechet distance between CLIP-feature
+distributions of a set of images and of the targets (realism of the set, alignment-free), and
+the variance of the Laplacian as a sharpness ratio to the target.
+
+| 5,254 test windows | CLIP similarity (centred) | CLIP Frechet | sharpness / target |
+|---|---|---|---|
+| blob | 0.00 | 0.65 | 0.00 |
+| run 1 prediction (deterministic) | **0.074** | **0.26** | 0.02 |
+| reference D prediction | 0.066 | 0.29 | 0.02 |
+| scaled D prediction | 0.056 | 0.33 | 0.02 |
+| D prior samples (both runs) | 0.00 | 0.32-0.34 | 0.03 |
+| reconstruction, narrow / wide autoencoder | 0.08 / 0.15 | 0.33 / 0.24 | 0.07 / 0.10 |
+| copy last frame | 0.37 | 0.00 | 1.01 |
+| best of the 4 inputs | 0.46 | 0.00 | 0.93 |
+
+Three readings. (1) The predictions carry real but weak target semantics (0.06-0.07 against
+0.00 for the blob), and scaling did not increase it; what the wide autoencoder improved is the
+*reconstruction* (0.08 -> 0.15), which the eye reads as "better images". The variational
+samples carry none: they are structured, but not with the target's structure. (2) Everything
+the models draw is at about 2 % of the target's sharpness, which is most of what "blurry"
+means and which no metric had captured. (3) The decisive number is copy-last at 0.37: under
+CLIP similarity a different but related frame beats the blob by a wide margin, which is the
+property pixel L1 and the VGG distance lacked. That makes CLIP similarity a training loss
+that rewards plausibility. It is added as `--clip-loss-weight` (differentiable through a frozen
+CLIP on the decoded image, targeting the cached CLIP embedding of frame 5, centred like the
+other cosine terms); results in 11c.
