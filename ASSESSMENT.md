@@ -370,3 +370,12 @@ The text head collapses to the corpus mode under greedy decoding for the analogo
 the conditioning adds 0.10 nats per token against a strong style prior. Judge it by the
 cross-entropy gap and retrieval, and sample (temperature or nucleus, repetition penalty) to
 see the conditional signal in generated strings.
+
+**Which input frame to copy.** The last frame is not the usual source. Across the test
+windows the closest input to the 5th frame is frame 1 in 20 %, frame 2 in 20 %, frame 3 in
+33 % and frame 4 in 27 % of cases, the A-B-A-B rhythm of dialogue editing. Near-copies (some
+input within L1 0.06) exist in 15 % of windows, not 6 %, and the source is frame 3 in 44 % of
+them. Copying the best of the four inputs scores 0.130 (vs 0.170 for the last frame), and the
+best of blob or best-of-4 scores 0.112. A copy path should therefore attend over all four
+inputs (a softmax over frames, or per pixel) and gate the blend against the generated image;
+that pattern is learnable from the inputs alone, since the alternation is visible in them.
