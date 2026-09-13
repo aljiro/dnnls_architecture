@@ -34,10 +34,11 @@ import torch.nn.functional as F
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from v2.data import K, gather, load_split, tokenizer, windows  # noqa: E402
-from v2.models import SequencePredictor, TextEncoderLSTM, VisualAutoencoder, latent_loss  # noqa: E402
+from v2.models import SequencePredictor, TextEncoderLSTM, VisualAutoencoder, kl_divergence, latent_loss  # noqa: E402
 from v2.visualize import make_figure  # noqa: E402
 
 PERCEPTUAL = None      # set in main() when --perceptual-weight > 0
+N_SAMPLES = 5
 
 OUT = ROOT / "v2" / "out"
 OUT.mkdir(parents=True, exist_ok=True)
@@ -48,8 +49,12 @@ def text_input(batch: dict, mode: str) -> torch.Tensor:
     return batch["txt"] if mode == "minilm" else batch["ids"]
 
 
-def run_model(model: SequencePredictor, batch: dict, mode: str) -> dict:
-    extra = {k: batch[k] for k in ("set_emb", "ent_pix", "ent_slot") if model.stage == "C"}
+def run_model(model: SequencePredictor, batch: dict, mode: str, train: bool = False, sample: bool = False) -> dict:
+    extra = {k: batch[k] for k in ("set_emb", "ent_pix", "ent_slot") if model.annotated}
+    if model.stage == "D":
+        extra.update(chars_in=batch["chars_in"], slot_name_ids=batch["slot_name_ids"], sample=sample)
+        if train:   # posterior sample and the true characters' names during training
+            extra.update(target_latent=model.target_latent(batch["target"]), names_present=batch["target_chars"])
     return model(batch["frames"], text_input(batch, mode), batch["target_ids"][:, :-1], **extra)
 
 
@@ -82,6 +87,7 @@ def evaluate(model: SequencePredictor, d: dict, s: torch.Tensor, t: torch.Tensor
     n = len(s)
     per = lambda a, b: (a - b).abs().mean(dim=(1, 2, 3))
     W: dict[str, list] = {k: [] for k in ("l1", "l1_blob", "l1_copy", "l1_recon", "copy_best", "best_in", "alpha", "gate",
+                                          "l1_best_of_k", "l1_sample_mean", "diversity", "l1_posterior", "kl",
                                           "copy_gate", "perc_model", "perc_blob", "perc_copy", "perc_recon",
                                           "char_logits", "target_chars", "chars_in", "n_chars")}
     Z: dict[str, list] = {k: [] for k in ("z", "z_true", "e_pred", "e_true")}
@@ -94,6 +100,14 @@ def evaluate(model: SequencePredictor, d: dict, s: torch.Tensor, t: torch.Tensor
         target, img = batch["target"], o["image"]
         per_in = (batch["frames"] - target[:, None]).abs().mean(dim=(2, 3, 4))            # [B, K]
         recon = model.image_decoder(model.image_encoder(target))
+        if model.stage == "D":
+            samples = torch.stack([run_model(model, batch, mode, sample=True)["image"] for _ in range(N_SAMPLES)])  # [S, B, ...]
+            l1_s = (samples - target[None]).abs().mean(dim=(2, 3, 4))                                            # [S, B]
+            W["l1_best_of_k"].append(l1_s.min(0).values); W["l1_sample_mean"].append(l1_s.mean(0))
+            W["diversity"].append((samples[:, None] - samples[None]).abs().mean(dim=(3, 4, 5)).sum((0, 1)) / (N_SAMPLES * (N_SAMPLES - 1)))
+            o_post = run_model(model, batch, mode, train=True)
+            W["l1_posterior"].append(per(o_post["image"], target)); W["kl"].append(kl_divergence(o_post).expand(len(target)))
+            del samples, o_post
         W["l1"].append(per(img, target)); W["l1_blob"].append(per(median.expand_as(target), target))
         W["l1_copy"].append(per(batch["frames"][:, -1], target)); W["l1_recon"].append(per(recon, target))
         W["copy_best"].append(per_in.min(1).values); W["best_in"].append(per_in.argmin(1))
@@ -113,7 +127,7 @@ def evaluate(model: SequencePredictor, d: dict, s: torch.Tensor, t: torch.Tensor
         logits_shuf = model.text_decoder(batch["target_ids"][:, :-1], o["cond"][torch.randperm(len(tgt), device=DEVICE)])
         ce_shuf += F.cross_entropy(logits_shuf.flatten(0, 1), tgt.flatten(), ignore_index=pad_id, reduction="sum").item()
         n_tok += (tgt != pad_id).sum().item()
-        if model.stage == "C":
+        if model.annotated:
             W["char_logits"].append(o["char_logits"]); W["target_chars"].append(batch["target_chars"])
             W["chars_in"].append(batch["chars_in"]); W["n_chars"].append(batch["n_chars"])
         del o, img, recon, batch
@@ -147,22 +161,28 @@ def evaluate(model: SequencePredictor, d: dict, s: torch.Tensor, t: torch.Tensor
     if "perc_model" in a:
         for k in ("perc_model", "perc_blob", "perc_copy", "perc_recon"):
             res[k] = a[k].mean().item()
+    if "l1_best_of_k" in a:
+        res.update({"img_L1_best_of_k": a["l1_best_of_k"].mean().item(), "img_L1_sample_mean": a["l1_sample_mean"].mean().item(),
+                    "sample_diversity": a["diversity"].mean().item(), "img_L1_posterior": a["l1_posterior"].mean().item(),
+                    "kl": a["kl"].mean().item()})
     if "copy_gate" in a:
         res["copy_gate_near"] = a["copy_gate"][near].mean().item() if near.any() else float("nan")
         res["copy_gate_cut"] = a["copy_gate"][~near].mean().item()
-    if model.stage == "C":
+    if model.annotated:
         mask = torch.arange(a["target_chars"].size(1), device=DEVICE)[None] < a["n_chars"][:, None]
         true = a["target_chars"]
         res["char_F1"] = f1(a["char_logits"] > 0, true, mask)
+        res["char_F1@0.3"] = f1(torch.sigmoid(a["char_logits"]) > 0.3, true, mask)
         res["char_F1_same_as_frame4"] = f1(a["chars_in"][:, -1], true, mask)
         res["char_F1_all_seen"] = f1(a["chars_in"].any(1), true, mask)
+        res["char_F1_in_2plus"] = f1(a["chars_in"].sum(1) >= 2, true, mask)
     print(f"[{tag}] " + "  ".join(f"{k}={v:.4f}" if abs(v) < 1 else f"{k}={v:.2f}" for k, v in res.items()), flush=True)
     return res
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--stage", choices=["0", "A", "B", "C"], default="A")
+    ap.add_argument("--stage", choices=["0", "A", "B", "C", "D"], default="A")
     ap.add_argument("--text-encoder", choices=["minilm", "lstm"], default="minilm")
     ap.add_argument("--epochs", type=int, default=15)
     ap.add_argument("--batch-size", type=int, default=32)
@@ -191,15 +211,19 @@ def main() -> None:
     ap.add_argument("--copy-path", action="store_true", help="pixel copy path over the four inputs with a per-pixel gate")
     ap.add_argument("--recon-weight", type=float, default=0.0,
                     help="L1 of decoder(encoder(target)) during training, so the autoencoder keeps its reconstruction skill")
+    ap.add_argument("--kl-weight", type=float, default=1e-3, help="stage D: weight of KL(q || p), linearly warmed up over --kl-warmup epochs")
+    ap.add_argument("--kl-warmup", type=float, default=3.0)
+    ap.add_argument("--n-samples", type=int, default=5, help="stage D: prior samples per window at evaluation")
     ap.add_argument("--perceptual-weight", type=float, default=0.0,
                     help="VGG feature-space distance to the target added to the image loss (v2/perceptual.py)")
     ap.add_argument("--tag", default="")
     args = ap.parse_args()
     torch.manual_seed(0)
     tok = tokenizer()
-    annot = args.stage == "C"
+    annot = args.stage in ("C", "D")
 
-    global PERCEPTUAL
+    global PERCEPTUAL, N_SAMPLES
+    N_SAMPLES = args.n_samples
     if args.perceptual_weight > 0:
         from v2.perceptual import VGGPerceptual
         PERCEPTUAL = VGGPerceptual().to(DEVICE)
@@ -255,7 +279,7 @@ def main() -> None:
         for b in range(len(s_tr) // args.batch_size):
             j = order[b * args.batch_size:(b + 1) * args.batch_size]
             batch = gather(tr_all, s_tr[j], t_tr[j])
-            o = run_model(model, batch, args.text_encoder)
+            o = run_model(model, batch, args.text_encoder, train=True)
             losses = {
                 "pixel": args.pixel_weight * F.l1_loss(o["image"], batch["target"]),
                 "latent": args.latent_weight * latent_loss(o["z"], model.target_latent(batch["target"])),
@@ -265,6 +289,9 @@ def main() -> None:
             }
             if PERCEPTUAL is not None:
                 losses["perceptual"] = args.perceptual_weight * PERCEPTUAL(o["image"], batch["target"])
+            if args.stage == "D":
+                warm = min(1.0, (epoch + b / (len(s_tr) // args.batch_size)) / max(args.kl_warmup, 1e-6))
+                losses["kl"] = args.kl_weight * warm * kl_divergence(o)
             if args.recon_weight > 0:
                 losses["recon"] = args.recon_weight * F.l1_loss(model.image_decoder(model.image_encoder(batch["target"])), batch["target"])
             if args.attn_weight > 0 or args.gate_weight > 0:
@@ -274,7 +301,7 @@ def main() -> None:
                     losses["attn"] = args.attn_weight * F.nll_loss(torch.log(o["alpha"][close] + 1e-6), per_in.argmin(1)[close])
                 if args.gate_weight > 0:
                     losses["gate"] = args.gate_weight * F.binary_cross_entropy(o["gate"].clamp(1e-6, 1 - 1e-6), close.float())
-            if args.stage == "C":
+            if args.stage in ("C", "D"):
                 mask = (torch.arange(o["char_logits"].size(1), device=DEVICE)[None] < batch["n_chars"][:, None]).float()
                 bce = F.binary_cross_entropy_with_logits(o["char_logits"], batch["target_chars"].float(), reduction="none")
                 losses["chars"] = args.char_weight * (bce * mask).sum() / mask.sum().clamp(min=1)
@@ -302,7 +329,7 @@ def main() -> None:
     res_last = evaluate(model, te, s_te, t_te, args.text_encoder, tok.pad_token_id, "TEST last epoch")
     model.load_state_dict(best_state)
     res = evaluate(model, te, s_te, t_te, args.text_encoder, tok.pad_token_id, f"TEST best val retrieval (epoch {best_epoch})")
-    make_figure(model, te, tok, args.text_encoder, OUT / f"predictions_{name}.png", sample=args.stage in ("B", "C"))
+    make_figure(model, te, tok, args.text_encoder, OUT / f"predictions_{name}.png", sample=args.stage in ("B", "C", "D"), train=tr_all)
     print("TEST summary:", {k: round(v, 4) for k, v in res.items()})
 
 
