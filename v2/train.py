@@ -104,6 +104,7 @@ def evaluate(model: SequencePredictor, d: dict, s: torch.Tensor, t: torch.Tensor
         "pred_spread": a["img"].std(0).mean().item(),
         "latent_cos": ((cos.sum() - cos.diag().sum()) / (len(zn) * (len(zn) - 1))).item(),
         "alpha_on_best_input": a["alpha"].gather(1, a["best_in"][:, None]).mean().item(),
+        "alpha_argmax_acc_near": (a["alpha"].argmax(1) == a["best_in"])[near].float().mean().item() if near.any() else float("nan"),
         "gate_near_copy": a["gate"][near].mean().item() if near.any() else float("nan"),
         "gate_cut": a["gate"][~near].mean().item(),
         "latent_R@10": hit_z[:, :10].any(1).float().mean().item(),
@@ -135,6 +136,12 @@ def main() -> None:
     ap.add_argument("--char-weight", type=float, default=1.0)
     ap.add_argument("--setting-weight", type=float, default=1.0)
     ap.add_argument("--word-dropout", type=float, default=0.3)
+    ap.add_argument("--attn-weight", type=float, default=0.0,
+                    help="supervise the attention toward the input closest to the target (known at training time)")
+    ap.add_argument("--gate-weight", type=float, default=0.0,
+                    help="supervise the gate: 1 when some input is within --sup-threshold of the target, else 0")
+    ap.add_argument("--sup-threshold", type=float, default=0.10,
+                    help="windows whose closest input has L1 below this get attention supervision")
     ap.add_argument("--ae-weights", default=str(OUT / "visual_ae.pt"))
     ap.add_argument("--freeze-image-encoder", action="store_true")
     ap.add_argument("--tag", default="")
@@ -173,6 +180,7 @@ def main() -> None:
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, args.lr, total_steps=steps, pct_start=0.1)
 
     t0 = time.time()
+    best_val, best_state, best_epoch = float("inf"), None, 0
     for epoch in range(args.epochs):
         model.train()
         order = torch.randperm(len(s_tr), device=DEVICE)
@@ -188,6 +196,13 @@ def main() -> None:
                                                            ignore_index=tok.pad_token_id),
                 "emb": args.text_embed_weight * latent_loss(o["e_txt"], batch["target_txt"]),
             }
+            if args.attn_weight > 0 or args.gate_weight > 0:
+                per_in = (batch["frames"] - batch["target"][:, None]).abs().mean(dim=(2, 3, 4))   # [B, K]
+                close = per_in.min(1).values < args.sup_threshold
+                if args.attn_weight > 0 and close.any():
+                    losses["attn"] = args.attn_weight * F.nll_loss(torch.log(o["alpha"][close] + 1e-6), per_in.argmin(1)[close])
+                if args.gate_weight > 0:
+                    losses["gate"] = args.gate_weight * F.binary_cross_entropy(o["gate"].clamp(1e-6, 1 - 1e-6), close.float())
             if args.stage == "C":
                 mask = (torch.arange(o["char_logits"].size(1), device=DEVICE)[None] < batch["n_chars"][:, None]).float()
                 bce = F.binary_cross_entropy_with_logits(o["char_logits"], batch["target_chars"].float(), reduction="none")
@@ -202,10 +217,16 @@ def main() -> None:
                 sums[k] = sums.get(k, 0.0) + v.item()
         print(f"epoch {epoch + 1:2d}/{args.epochs} ({time.time() - t0:.0f}s)  train " +
               "  ".join(f"{k} {v / (b + 1):.4f}" for k, v in sums.items()), flush=True)
-        evaluate(model, tr_all, s_va, t_va, args.text_encoder, tok.pad_token_id, f"val e{epoch + 1}")
+        val = evaluate(model, tr_all, s_va, t_va, args.text_encoder, tok.pad_token_id, f"val e{epoch + 1}")
+        if val["img_L1"] < best_val:
+            best_val, best_epoch = val["img_L1"], epoch + 1
+            best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
 
-    res = evaluate(model, te, s_te, t_te, args.text_encoder, tok.pad_token_id, "TEST")
     name = f"stage{args.stage}_{args.text_encoder}{args.tag}"
+    res_last = evaluate(model, te, s_te, t_te, args.text_encoder, tok.pad_token_id, "TEST last epoch")
+    torch.save(model.state_dict(), OUT / f"predictor_{name}_last.pt")
+    model.load_state_dict(best_state)
+    res = evaluate(model, te, s_te, t_te, args.text_encoder, tok.pad_token_id, f"TEST best val img_L1 (epoch {best_epoch})")
     torch.save(model.state_dict(), OUT / f"predictor_{name}.pt")
     make_figure(model, te, tok, args.text_encoder, OUT / f"predictions_{name}.png", sample=args.stage in ("B", "C"))
     print("TEST summary:", {k: round(v, 4) for k, v in res.items()})

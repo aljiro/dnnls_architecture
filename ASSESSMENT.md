@@ -523,3 +523,36 @@ effect on L1, and the extra losses cost text retrieval (49 % -> 43 %).
    validation.
 3. Drop the setting conditioning of the image decoder (no effect) and keep the setting
    embedding as an input only.
+
+### 10b. Supervised attention and early stopping (stage A + `--attn-weight 1 --gate-weight 0.5`)
+
+The closest input is known at training time (per-input pixel L1 to the target), so the
+attention is trained toward it on windows where that input is within L1 0.10, and the gate
+toward "such an input exists". The checkpoint is chosen by validation image L1.
+
+| test split | A | A + supervised attention, last epoch | same, best-val checkpoint (epoch 5) |
+|---|---|---|---|
+| image L1 | 0.135 | 0.132 | **0.130** |
+| L1 on near-copy windows | 0.077 | 0.075 | 0.075 |
+| attention argmax = closest input, near-copy windows | 29 % | 44 % | 52 % |
+| gate on near-copy / cut windows | 0.85 / 0.78 | 0.63 / 0.32 | 0.67 / 0.38 |
+| image-latent retrieval top-10 | 6.1 % | 6.6 % | 5.8 % |
+| text retrieval top-10 | 49 % | 25 % | 16 % |
+| text CE true / shuffled | 3.29 / 3.48 | 3.48 / 3.59 | 3.94 / 3.98 |
+
+The mechanism now works as designed: the attention finds the closest input half the time
+instead of a quarter, and the gate separates continuing shots from cuts. The pixel gain is
+real but small, 0.135 -> 0.130 overall and 0.077 -> 0.075 on the near-copy windows, for two
+reasons. First, the latent route has its own floor on those windows: decoding the best
+input's latent reproduces that input at 0.04, and that input differs from the target by up
+to 0.06, so about 0.06 is the best the mixture can do, against 0.041 for pixel copying.
+Second, the weights are soft (0.36 on the best input on average) and the gate still mixes in
+the residual. The cost was large: text retrieval fell from 49 % to 16-25 % and the decoder's
+dependence on its condition shrank, because the attention query and the gate are computed
+from the same GRU state the text heads rely on, and the supervision reshaped it. If this
+path is pursued, the selection should be computed from the frame latents directly (pairwise
+similarities between the inputs, which is where the A-B-A-B pattern lives) rather than from
+the shared sequence state, and the remaining gap on near-copy windows is the pixel copy path.
+For the L1 version of the architecture, 0.130 with the selection working is close to what
+this data allows without a pixel copy path; the 0.112 ceiling assumes perfect selection and
+perfect copying.
