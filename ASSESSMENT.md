@@ -647,3 +647,54 @@ plausible next shots on the 85 % of windows that cut. Sharper output on those wi
 loss that scores samples rather than expectations (adversarial or diffusion), or the retrieval
 formulation. Under the objectives available here, run 2 is the final state of the L1-family
 image head: 0.131 against floors of 0.151 and 0.170, with the autoencoder intact.
+
+### 10f. Stage D: variational latent, decoupled attention, per-slot head, cross-attention decoder
+
+Built on run 1 (reconstruction term, copy path). Four changes (`v2/models.py`, stage "D"):
+(1) the residual path is a conditional Gaussian: a prior from the sequence state, a posterior
+that also sees the frozen target latent, KL(q || p) with a 3-epoch warm-up, posterior samples
+during training, prior mean or prior samples at test; (2) the mixture / copy-path attention is
+computed from the similarities between the input frame latents, independent of the GRU, and
+supervised toward the closest input; (3) one logit per character slot from that slot's own
+presence history, pooled entity token and the sequence state; (4) the text decoder attends
+over a memory of the four input description vectors, the predicted text embedding and the
+names of the characters predicted present (true names during training; names come from the
+story's grounded mentions). Two runs, KL weight 1e-3 and 1e-2.
+
+| test split | run 1 (deterministic) | D, KL 1e-3 | D, KL 1e-2 |
+|---|---|---|---|
+| image L1, prior mean | 0.132 | 0.134 | 0.132 |
+| image L1, best of 5 prior samples | n/a | 0.136 | **0.125** |
+| image L1, average prior sample (blob 0.151) | n/a | 0.158 | 0.146 |
+| image L1, posterior sample (sees the target) | n/a | 0.059 | 0.096 |
+| sample diversity (mean L1 between samples) | n/a | 0.123 | 0.094 |
+| KL, nats | n/a | 124 | 10.8 |
+| L1 on near-copy windows | 0.071 | 0.077 | 0.073 |
+| attention picks the closest input, near-copy | 36 % | 44 % | 44 % |
+| text retrieval top-10 | 45.0 % | **49.6 %** | 47.8 % |
+| text CE, true / shuffled condition | 2.75 / 2.81 | 2.72 / 3.01 | 2.72 / 2.99 |
+| character F1 at 0.3 (baselines 0.38 / 0.41 / 0.47) | 0.41 | **0.45** | 0.44 |
+| image-latent retrieval top-10 | 8.7 % | 2.3 % | 3.5 % |
+
+**The variational latent is the first thing to move the image past the deterministic ceiling.**
+At KL 1e-3 the posterior smuggles the target (0.059 with 124 nats) and the prior never learns
+to match it: samples are diverse and structured but their average scores below the blob. At
+KL 1e-2 the channel is constrained (10.8 nats), the prior mean matches run 1, the average
+prior sample beats the blob (0.146 vs 0.151), and the best of five samples scores 0.125, below
+every deterministic model. The samples themselves are the visible change: blurred but
+composed images (figures against a lit background, a face-shaped warm region, a dark room
+with a lighter figure) instead of a smooth field, because the decoder is allowed to commit
+to one plausible next shot. Sharpness is still bounded by the L1-trained decoder.
+
+**The other three changes worked as designed.** Cross-attention with names quadruples the
+decoder's dependence on its condition (gap 0.27-0.29 nats vs 0.06) and the generated text uses
+the story's names; the per-slot head beats "all seen so far" (0.45 vs 0.41) and sits 0.02 below
+"in at least two inputs"; the decoupled supervised attention reaches 44 % without touching
+text retrieval, which the coupled version could not (section 10b). The prior mean is a poor
+point estimate for image-latent retrieval (3.5 %): with a stochastic latent, retrieval should
+use samples, or the posterior mean of the training set.
+
+Costs and open items: KL weight is a real hyper-parameter (1e-3 and 1e-2 differ in kind, not
+degree); the evaluation with 5 samples per window doubles validation time; and the deepest
+lesson of the run, that sampling and not a new distance is what turns averages into pictures,
+is the argument for an adversarial or diffusion decoder if sharper samples are the goal.
