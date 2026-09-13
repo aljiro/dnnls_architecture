@@ -379,3 +379,15 @@ them. Copying the best of the four inputs scores 0.130 (vs 0.170 for the last fr
 best of blob or best-of-4 scores 0.112. A copy path should therefore attend over all four
 inputs (a softmax over frames, or per pixel) and gate the blend against the generated image;
 that pattern is learnable from the inputs alone, since the alternation is visible in them.
+
+**Why the generated text and images look alike across windows (checked, not a bug).**
+Batched generation equals one-at-a-time generation and reversing the batch reverses the
+outputs. The phrases are corpus modes: 34 % of the 44k training descriptions contain "the
+tension", 14 % "palpable", 2.4 % open with "the tension reached a". The underlying cause of
+the sameness is that the predicted latents are nearly identical: pairwise cosine 0.98
+between windows. The 256-d vector feeding both decoders is a large constant plus a small
+input-dependent part; a linear head reads the small part (37 % text retrieval), but the LSTM
+decoder and the image decoder mostly see the constant. Next fix: remove the constant
+component before the decoders (batch normalisation without affine on `z`, or running-mean
+subtraction), or condition the text decoder on the predicted text embedding, which the cosine
+loss makes discriminative.
