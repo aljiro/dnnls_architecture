@@ -197,12 +197,17 @@ Reading it honestly:
   comes next* is close to unpredictable from four frames, because consecutive shots share a
   story, not appearance. What the model can do well is predict the *kind* of frame (scene,
   characters, lighting), which is what the global-pool numbers measure.
-- `poc/out/predictions_both.png` shows the decisive picture. Column "decode(true emb)" is a
-  small L1 pixel decoder applied to the *ground-truth* target embedding: it is still a blob
-  with the right brightness and colour. So even a perfect predictor would give you a blob
-  through an L1 pixel head. The "retrieved" column, the training frame nearest to the
-  predicted embedding, shows the right characters, setting and lighting, often from the same
-  film.
+- `poc/out/predictions_both.png` separates the two sources of blur. Column "decode(true emb)"
+  is a small L1 pixel decoder (the notebook's `VisualDecoder` with a 512-d latent) applied to
+  the *ground-truth* target embedding: a blurry, input-dependent image with the right colour,
+  brightness and coarse layout (a figure on the left, a bright background on the right) but
+  no sharp detail. Its training L1 of 0.116 is well below the 0.153 of a constant median
+  image, so this is not a blob; it is what L1 gives when the embedding does not pin down the
+  fine structure. "decode(pred emb)" looks much the same, so the prediction is about as good
+  as the truth at the resolution an L1 head can express. Sharper output needs a different
+  pixel loss (perceptual, adversarial, or a diffusion decoder), not a better predictor. The
+  "retrieved" column, the training frame nearest to the predicted embedding, shows the right
+  characters, setting and lighting, often from the same film.
 - Ablations (`--modality image` / `--modality text`) show that each modality predicts
   itself and the fusion adds nothing yet:
 
