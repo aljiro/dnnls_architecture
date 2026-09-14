@@ -8,7 +8,7 @@ target" and "prior matches"; free bits.
 flowchart LR
     HC[GRU state + context] --> PR[prior N mu_p, s_p]
     HC --> PO[posterior N mu_q, s_q<br/>also sees the frozen target latent, training only]
-    PR & PO --> KL[KL q || p, warmed up]
+    PR & PO --> KL[KL between posterior and prior, warmed up]
     PO --> Z[residual sample] --> DEC[decoder] --> L1[pixel L1]
     PR -. test: mean, or samples .-> Z
     Z --> CP[pixel copy path over the inputs, gated]

@@ -1,4 +1,4 @@
-"""v3: Fusion and a sequence model.
+"""v3: Multimodal fusion and a sequence model: the first version that takes frames and descriptions in and predicts both out.
 
 This file is the injection point. build_model() assembles the version from the shared components;
 to try your own component, pass a replacement class in `components`, for example
@@ -21,7 +21,7 @@ from storyseq.components import PredictorConfig  # noqa: E402
 from storyseq.training import TrainConfig, build_predictor  # noqa: E402
 
 CONFIG = TrainConfig(
-    name="v3_fusion",
+    name="v3_multimodal_fusion",
     model=PredictorConfig(latent_mode='residual', attention='fixed'),
     
 )

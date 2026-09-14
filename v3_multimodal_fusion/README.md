@@ -1,4 +1,4 @@
-# v3: Fusion and a sequence model
+# v3: Multimodal fusion and a sequence model
 
 **Concept.** Early fusion by concatenation; a GRU as the sequence summary; predicting in latent
 space; why a shared vector gets captured by the strongest loss.

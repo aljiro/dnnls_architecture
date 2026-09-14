@@ -40,7 +40,7 @@ def random_batch(cfg: PredictorConfig) -> dict:
     return kw
 
 
-@pytest.mark.parametrize("version", ["v3_fusion", "v4_attention", "v5_protect", "v6_annotations", "v7_names",
+@pytest.mark.parametrize("version", ["v3_multimodal_fusion", "v4_attention", "v5_protect", "v6_annotations", "v7_names",
                                      "v8_variational", "v9_scaling", "v10_semantic"])
 def test_version_forward_backward(version):
     cfg = load_config(version)
