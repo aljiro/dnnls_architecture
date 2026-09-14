@@ -1,17 +1,0 @@
-Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
-Generating train split:   0%|          | 0/42350 [00:00<?, ? examples/s]Generating train split:   0%|          | 100/42350 [00:00<00:59, 713.33 examples/s]Generating train split:   1%|          | 500/42350 [00:00<00:22, 1872.88 examples/s]Generating train split:   2%|▏         | 900/42350 [00:00<00:17, 2394.02 examples/s]Generating train split:   5%|▍         | 2000/42350 [00:00<00:08, 4726.54 examples/s]Generating train split:   6%|▌         | 2500/42350 [00:00<00:08, 4651.45 examples/s]Generating train split:   8%|▊         | 3300/42350 [00:00<00:07, 5480.88 examples/s]Generating train split:   9%|▉         | 3900/42350 [00:01<00:10, 3734.96 examples/s]Generating train split:  11%|█▏        | 4800/42350 [00:01<00:07, 4695.56 examples/s]Generating train split:  15%|█▍        | 6200/42350 [00:01<00:06, 5813.93 examples/s]Generating train split:  18%|█▊        | 7700/42350 [00:01<00:04, 7760.86 examples/s]Generating train split:  23%|██▎       | 9800/42350 [00:01<00:03, 10659.71 examples/s]Generating train split:  27%|██▋       | 11388/42350 [00:01<00:03, 9602.37 examples/s]Generating train split:  31%|███       | 13188/42350 [00:01<00:02, 11050.33 examples/s]Generating train split:  36%|███▌      | 15088/42350 [00:01<00:02, 12687.58 examples/s]Generating train split:  39%|███▉      | 16688/42350 [00:02<00:02, 11512.19 examples/s]Generating train split:  44%|████▎     | 18488/42350 [00:02<00:01, 12706.04 examples/s]Generating train split:  48%|████▊     | 20388/42350 [00:02<00:01, 11870.52 examples/s]Generating train split:  53%|█████▎    | 22376/42350 [00:02<00:01, 13632.65 examples/s]Generating train split:  60%|██████    | 25576/42350 [00:02<00:00, 17738.80 examples/s]Generating train split:  67%|██████▋   | 28376/42350 [00:02<00:00, 17790.80 examples/s]Generating train split:  73%|███████▎  | 30976/42350 [00:02<00:00, 17268.87 examples/s]Generating train split:  80%|███████▉  | 33763/42350 [00:03<00:00, 16499.65 examples/s]Generating train split:  86%|████████▌ | 36263/42350 [00:03<00:00, 16082.07 examples/s]Generating train split:  92%|█████████▏| 39163/42350 [00:03<00:00, 18774.19 examples/s]Generating train split: 100%|██████████| 42350/42350 [00:03<00:00, 19776.36 examples/s]Generating train split: 100%|██████████| 42350/42350 [00:03<00:00, 11872.95 examples/s]
-Generating test split:   0%|          | 0/10000 [00:00<?, ? examples/s]Generating test split:  20%|██        | 2000/10000 [00:00<00:00, 17578.92 examples/s]Generating test split:  42%|████▏     | 4200/10000 [00:00<00:00, 13948.47 examples/s]Generating test split:  62%|██████▏   | 6200/10000 [00:00<00:00, 15385.58 examples/s]Generating test split:  82%|████████▏ | 8200/10000 [00:00<00:00, 16582.22 examples/s]Generating test split: 100%|██████████| 10000/10000 [00:00<00:00, 16177.95 examples/s]Generating test split: 100%|██████████| 10000/10000 [00:00<00:00, 15914.03 examples/s]
-[train] 0/42350  80s
-[train] 5000/42350  91s
-[train] 10000/42350  102s
-[train] 15000/42350  113s
-[train] 20000/42350  126s
-[train] 25000/42350  140s
-[train] 30000/42350  151s
-[train] 35000/42350  163s
-[train] 40000/42350  174s
-[train] 42350 frames
-[test] 0/10000  195s
-[test] 5000/10000  210s
-[test] 10000 frames
-saved 52350 frames and captions to /home/aljiro/dev/dnnls_architecture/poc/cache/groundcap.pt  (231s)

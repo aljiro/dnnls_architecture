@@ -1,9 +1,0 @@
-stories: 3552  train 2841  val 711  equalize=False  ctx_loss=False
-validation floors: constant median image L1 = 0.1533   copy-4th-frame L1 = 0.1711
-epoch 1/6 (7s)  train im=0.1578 ctx=0.0097 txt=7.282 | val L1=0.1542 (median floor 0.1533, copy floor 0.1711) | pred spread 0.0000 vs target spread 0.2048 | |pred - median| 0.0163 | dead backbone units 0% | fused latent: spread 0.0001, dead 50%
-epoch 2/6 (6s)  train im=0.1523 ctx=0.0070 txt=5.956 | val L1=0.1545 (median floor 0.1533, copy floor 0.1711) | pred spread 0.0000 vs target spread 0.2048 | |pred - median| 0.0201 | dead backbone units 0% | fused latent: spread 0.0001, dead 50%
-epoch 3/6 (6s)  train im=0.1524 ctx=0.0069 txt=5.892 | val L1=0.1537 (median floor 0.1533, copy floor 0.1711) | pred spread 0.0000 vs target spread 0.2048 | |pred - median| 0.0114 | dead backbone units 0% | fused latent: spread 0.0001, dead 50%
-epoch 4/6 (6s)  train im=0.1523 ctx=0.0068 txt=5.784 | val L1=0.1538 (median floor 0.1533, copy floor 0.1711) | pred spread 0.0000 vs target spread 0.2048 | |pred - median| 0.0121 | dead backbone units 0% | fused latent: spread 0.0001, dead 50%
-epoch 5/6 (6s)  train im=0.1521 ctx=0.0069 txt=5.646 | val L1=0.1543 (median floor 0.1533, copy floor 0.1711) | pred spread 0.0000 vs target spread 0.2048 | |pred - median| 0.0191 | dead backbone units 0% | fused latent: spread 0.0001, dead 50%
-epoch 6/6 (6s)  train im=0.1523 ctx=0.0068 txt=5.469 | val L1=0.1537 (median floor 0.1533, copy floor 0.1711) | pred spread 0.0000 vs target spread 0.2048 | |pred - median| 0.0105 | dead backbone units 0% | fused latent: spread 0.0001, dead 50%
-figure: /home/aljiro/dev/dnnls_architecture/diagnostics/out/original_raw_noctx.png

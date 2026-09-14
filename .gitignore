@@ -2,7 +2,6 @@ venv/
 .pytest_cache/
 __pycache__/
 cache/
-cache
 pretrained/*.pt
 v*/out/
 *.pt
