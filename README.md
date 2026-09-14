@@ -40,7 +40,7 @@ flowchart LR
 | `v0_floors` | the data, the floors every number is judged against, the cut / continue split | 0 |
 | `v1_autoencoder` | the convolutional autoencoder that represents a frame | 1 |
 | `v2_text` | the text language model (generation) and the frozen sentence encoder (inputs) | 2 |
-| `v3_multimodal_fusion` | fusion of frame and text vectors, a GRU, latent-space prediction, the three classic fixes | 3 |
+| `v3_multimodal_fusion` | the first fully multimodal version: frame and text vectors fused, a GRU, latent-space prediction of the next frame and its description, the three classic fixes | 3 |
 | `v4_attention` | content-dependent attention, mixture of input latents with a gate | 4 |
 | `v5_protect` | pretrained language model, discriminative learning rates, reconstruction term, retrieval-based selection | 5 |
 | `v6_annotations` | setting vectors, entity tokens, the "which characters appear next" head | 6 |
