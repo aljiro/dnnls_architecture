@@ -60,7 +60,10 @@ class TrainConfig:
     kl_warmup: float = 3.0
     free_bits: float = 0.0
     clip_loss_weight: float = 0.0               # semantic loss through frozen CLIP (Level 10)
+    clip_loss_mode: str = "contrastive"         # "contrastive": InfoNCE over the batch (relative; a generic template gains
+                                                # nothing); "cosine": centred cosine to the target (absolute; exploitable)
     clip_augment: bool = False
+    clip_temperature: float = 0.07
     # evaluation
     n_samples: int = 5                          # prior samples per window for variational models
     semantic: bool = True                       # CLIP similarity / Frechet / sharpness table at the end
@@ -312,7 +315,13 @@ def run(cfg: TrainConfig, build_model, overrides: bool = True) -> dict:
                 warm = min(1.0, (epoch + b / steps_per_epoch) / max(cfg.kl_warmup, 1e-6))
                 L["kl"] = cfg.kl_weight * warm * kl_divergence(o, cfg.free_bits)
             if cfg.clip_loss_weight > 0:
-                L["clip"] = cfg.clip_loss_weight * latent_loss(clip_embed(o["image"], augment=cfg.clip_augment), batch["target_clip"])
+                pred_clip = clip_embed(o["image"], augment=cfg.clip_augment)
+                if cfg.clip_loss_mode == "contrastive":
+                    mu = batch["target_clip"].mean(0, keepdim=True)
+                    logits = F.normalize(pred_clip - mu, dim=-1) @ F.normalize(batch["target_clip"] - mu, dim=-1).T / cfg.clip_temperature
+                    L["clip"] = cfg.clip_loss_weight * F.cross_entropy(logits, torch.arange(len(logits), device=dev))
+                else:
+                    L["clip"] = cfg.clip_loss_weight * latent_loss(pred_clip, batch["target_clip"])
             if model.annotated:
                 mask = (torch.arange(o["char_logits"].size(1), device=dev)[None] < batch["n_chars"][:, None]).float()
                 bce = F.binary_cross_entropy_with_logits(o["char_logits"], batch["target_chars"].float(), reduction="none")
