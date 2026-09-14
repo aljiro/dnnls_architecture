@@ -1,5 +1,9 @@
 beautifulsoup4
 datasets
+huggingface_hub
+matplotlib
+numpy
+pillow
 pytest
 torch
 torchvision
