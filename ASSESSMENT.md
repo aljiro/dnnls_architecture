@@ -870,3 +870,25 @@ augmentations (crops, flips, small colour jitter) before the CLIP encoder so the
 satisfied by a fixed pattern; a lower weight (0.3-0.5); and, if needed, a discriminator. With
 the artefact removed, this is the image head the project should present: the first one whose
 outputs a semantic metric, a realism metric and the eye all rank above the blob.
+
+### 11d. CLIP loss with augmentations
+
+Weight 0.5, two random views (resized crop 70-100 %, horizontal flip, brightness / contrast
+jitter) before CLIP (`--clip-augment`). Same 5,254 test windows.
+
+| | CLIP loss 1.0 | CLIP loss 0.5 + augmentations |
+|---|---|---|
+| CLIP similarity of the prediction | 0.249 | 0.240 |
+| sharpness / target, prediction / samples | 0.34 / 0.33 | **0.43 / 0.42** |
+| CLIP Frechet, prediction / samples | 0.25 / 0.23 | 0.25 / 0.22 |
+| pixel L1 / best of 5 | 0.134 / 0.126 | 0.134 / 0.127 |
+| text retrieval / CE | 48.8 % / 2.40 | 49.5 % / 2.40 |
+
+The fixed-position motif is gone and the outputs are sharper, but the figure shows a new exploit:
+a faint man's face in a suit in every prediction and sample, whatever the scene. Crops and flips
+defeat a pattern at a fixed position, not a translation-robust template that raises CLIP
+similarity to most frames of a people-heavy film corpus. The fix is to make the loss relative: a
+contrastive (InfoNCE) form in which the prediction must be closer to its own target's CLIP
+embedding than to the other targets in the batch. A generic face raises similarity to every
+target equally and gains nothing. This is the configuration of `v10_semantic` on the `main`
+branch (`clip_loss_mode="contrastive"`).
