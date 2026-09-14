@@ -319,8 +319,11 @@ That makes it a loss that rewards plausibility. Trained with it (15 epochs): CLI
 of the prediction 0.249 (from 0.056), sharpness 0.34 of the target's (from 0.02), Frechet
 distance 0.25 (from 0.33), pixel L1 0.134 (from 0.132). The predictions become textured,
 scene-like images. Two caveats to teach with it: the samples still carry no target semantics,
-and a repeated motif appears in every output, the decoder exploiting the frozen CLIP, which
-random differentiable augmentations before the encoder are the standard cure for.
+and the decoder exploits the frozen CLIP: with an absolute similarity loss it paints a fixed
+motif; with random augmentations before the encoder the motif becomes a translation-robust
+template (a faint face in a suit in every scene). The cure is a *relative* loss: contrastive
+InfoNCE over the batch, where the prediction must be closer to its own target than to the other
+targets, so a generic template gains nothing.
 
 **Exercises.** Compute the three measures for the floors and show which metric ranks copy-last
 above the blob. Add the CLIP loss and plot CLIP similarity against pixel L1 over epochs. Judge

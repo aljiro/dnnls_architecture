@@ -389,8 +389,10 @@ earlier distance lacked: copy-last scores 0.37 against 0.00 for the blob, so CLI
 rewards a related frame over the average. Used as a training term through a frozen CLIP, it
 raises the prediction's CLIP similarity 4.5x (0.056 -> 0.249) and its sharpness 17x at a cost
 of 0.002 pixel L1, and turns the predictions into textured, scene-like images; it also leaves a
-repeated CLIP-exploiting motif in every output, to be removed with augmentations before the
-encoder (ASSESSMENT.md 11c).
+CLIP-exploiting motif in every output; augmentations before the encoder remove the fixed motif
+and sharpen the outputs further (0.43 of the target's sharpness) but the exploit returns as a
+translation-robust template, which only a relative, contrastive form of the loss removes
+(ASSESSMENT.md 11c-11d).
 
 ## 8. Where it stands
 
