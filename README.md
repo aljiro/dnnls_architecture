@@ -100,6 +100,21 @@ validation retrieval) and the last epoch, `curves_*.png` with training losses an
 metrics per epoch, `history_*.json`, `summary_*.json` with the test numbers and the semantic
 table, and `predictions_*_seed{0,1,2}.png`.
 
+## Weights
+
+Trained weights for every version are published as assets of the GitHub release `weights-v1`
+(not in git, to keep clones small): the v1 and v2 outputs (`pretrained/*.pt`) and one predictor
+per version (`<version>/out/predictor_<version>.pt`, 100-160 MB each). Fetch what you need:
+
+```bash
+python -m storyseq.download_weights                          # everything
+python -m storyseq.download_weights v4_attention --pretrained  # one version plus the pretrained parts
+cd v4_attention && python visualize.py                       # figures without training
+```
+
+With the pretrained parts in place, every version's `train.py` reproduces its predictor in 10 to
+90 minutes on a laptop GPU.
+
 ## How to read a run
 
 The trainer prints, every epoch, the image L1 next to two floors (the median image and copy-last),
