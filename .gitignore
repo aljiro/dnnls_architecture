@@ -5,3 +5,5 @@ cache/
 pretrained/*.pt
 v*/out/
 *.pt
+v*/train_*.log
+v10_semantic/model_w02.py
