@@ -47,7 +47,7 @@ flowchart LR
 | `v7_names` | names in the text through cross-attention, per-slot character head, selection from frame similarities | 7 |
 | `v8_variational` | a distribution over next frames (conditional VAE), the pixel copy path | 8 |
 | `v9_scaling` | all frames, GroundCap pretraining, CLIP inputs, a wider decoder | 9 |
-| `v10_semantic` | semantic metrics (CLIP similarity, Frechet, sharpness) and the CLIP loss with augmentations | 10 |
+| `v10_semantic` | semantic metrics (CLIP similarity, Frechet, sharpness) and a contrastive CLIP loss with augmentations | 10 |
 
 `docs/NARRATIVE.md` is the companion text: for each level the concept, what to build, what to
 measure, the value reached here, the lesson and exercise ideas.

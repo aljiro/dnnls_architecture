@@ -315,10 +315,10 @@ looked better was the wide autoencoder's reconstruction. The variational samples
 but not the target's. Everything drawn was at 2 % of the target's sharpness. And the decisive
 row: copy-last scores 0.37 against 0.00 for the blob, so under CLIP similarity a different but
 related frame beats the average by a wide margin, the property no pixel or VGG distance had.
-That makes it a loss that rewards plausibility. Trained with it (15 epochs): CLIP similarity
-of the prediction 0.249 (from 0.056), sharpness 0.34 of the target's (from 0.02), Frechet
-distance 0.25 (from 0.33), pixel L1 0.134 (from 0.132). The predictions become textured,
-scene-like images. Two caveats to teach with it: the samples still carry no target semantics,
+That makes it a loss that rewards plausibility. Trained with it in its contrastive form at
+weight 0.2 (the shipped v10): CLIP similarity of the prediction 0.24 (from 0.06), sharpness 0.29
+of the target's (from 0.02), Frechet distance 0.22 (from 0.33), pixel L1 0.136 (from 0.132),
+text retrieval 44 % (from 52 %). The predictions become textured, scene-like images. Two caveats to teach with it: the samples still carry no target semantics,
 and the decoder exploits the frozen CLIP: with an absolute similarity loss it paints a fixed
 motif; with random augmentations before the encoder the motif becomes a translation-robust
 template (a faint face in a suit in every scene). The cure is a *relative* loss: contrastive

@@ -31,7 +31,7 @@ CONFIG = TrainConfig(
     recon_weight=1.0,
     attn_weight=1.0,
     kl_weight=1e-2,
-    clip_loss_weight=0.5,
+    clip_loss_weight=0.2,
     clip_loss_mode='contrastive',
     clip_augment=True,
 )
